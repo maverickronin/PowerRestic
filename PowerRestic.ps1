@@ -1163,7 +1163,8 @@ function Create-Repo {
 #1710 - SnapshotSelectionMenu
 #1720 - CheckRepositoryMenu
 #1730 - CheckRepositoryDataTypeMenu
-#1740 - ConfirmCheckRepositoryMenu
+#1740 - ConfirmCheckRepositoryMetadataOnlyMenu
+#1750 - ConfirmCheckRepositoryFileDataMenu
 #1800 - BrowseAndRestoreMenu
 #1810 - RestoreSingleItemDestinationMenu
 #1820 - RestoreSingleItemOptionsMenu
@@ -1348,7 +1349,7 @@ while ($true) {
     }
 
     :CheckRepositoryMenu while ($MenuAddress -eq 1720) {
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -MenuLines $false @(
+        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
             "Repo ID $($RepoInfo.id) at $($RepoInfo.repo_path) selected"
             ""
             "Check repository metadata integrity"
@@ -1357,16 +1358,12 @@ while ($true) {
             "Exit"
         )
         switch ($MenuChoice) {
-            1 {$MenuAddress -eq 1740} #ConfirmCheckRepositoryMenu
-            2 {$MenuAddress -eq 1730} #CheckRepositoryDataTypeMenu
+            1 {$MenuAddress = 1740} #ConfirmCheckRepositoryMetadataOnlyMenu
+            2 {$MenuAddress = 1730} #CheckRepositoryDataTypeMenu
             3 {$MenuAddress = 0}      #MainMenu
             4 {exit}
         }
-        write-host ""
-        write-host "Not implemented yet.  Press enter to continue"
-        read-host
-        $MenuAddress = 1700
-        break
+        break CheckRepositoryMenu
     }
 
     :CheckRepositoryDataTypeMenu while ($MenuAddress -eq 1730) {
@@ -1376,7 +1373,24 @@ while ($true) {
         $MenuAddress = 1700
     }
 
-    :ConfirmCheckRepositoryMenu while ($MenuAddress -eq 1740) {
+    :ConfirmCheckRepositoryMetadataOnlyMenu while ($MenuAddress -eq 1740) {
+        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+            "Check metadata of repository ID $($RepoInfo.id) at path $RepoPath ?"
+            ""
+            "Yes"
+            "No"
+        )
+        if ($MenuChoice -eq 1) {
+            cls
+            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check"
+            cmd /c $c
+            pause
+        }
+        $MenuAddress = 1700
+        break ConfirmCheckRepositoryMetadataOnlyMenu
+    }
+
+    :CheckRepositoryFileDataMenu while ($MenuAddress -eq 1750) {
         write-host ""
         write-host "Not implemented yet.  Press enter to continue"
         read-host
