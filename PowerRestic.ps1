@@ -43,7 +43,8 @@ function Clear-Variables {
     $script:RestoreFromSingle = $null #Individual item chosen in browse/restore menu
     [System.Collections.ArrayList]$script:RestoreFromQueue = @() #List of items Queued to restore together
     $script:RestoreTo = "" #Folder to restore the item to
-    $script:NewRepoPath = ""
+    $script:NewRepoPath = "" #Path to create new repo at
+    $script:RepoCheckCommand = "" #Command specifying options for checking repository integerity
 }
 
 function Load-ini {
@@ -1140,6 +1141,57 @@ function Create-Repo {
     pause
 }
 
+function Validate-Decimal {
+    try {
+        [decimal]::Parse($n)|Out-Null
+    } catch {
+        $false
+        return
+    }
+    $true
+    return
+}
+
+function Validate-DataSize {
+    #Validates if input matches a data size format such as 50M, 10g, or 20TB for K, M, G, and T and returns true or false
+    #$bytes specifies if the suffix is supposed to include the trailing "B" or not
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$string,
+        [Parameter()]
+        [bool]$bytes = $true
+    )
+
+    #False it doesn't start with a number
+    if ($string -match '^[0-9]*') {
+        $number = $Matches[0]
+    } else {
+        $false
+        return
+    }
+
+    #check that the suffix is valid
+    if ($string -match '[kKmMgGtT][bB]$' -and $bytes -eq $true) {
+        # case insensitive match for kb, mb, gb, tb at the end
+    } elseif ($string -match '[kKmMgGtT]$' -and $bytes -eq $false) {
+        #case insensitive match for k, m, g, t at the end
+    } else {
+        $false
+        return
+    }
+
+    #Double check the number by parsing as an int
+    try {
+        [int]::parse($number)|Out-Null
+    } catch {
+        $false
+        return
+    }
+    #True if all tests passed
+    $true
+    return
+}
+
 ###################################################################################################
 #Main loop
 ###################################################################################################
@@ -1367,10 +1419,46 @@ while ($true) {
     }
 
     :CheckRepositoryDataTypeMenu while ($MenuAddress -eq 1730) {
-        write-host ""
-        write-host "Not implemented yet.  Press enter to continue"
-        read-host
-        $MenuAddress = 1700
+        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+            "Select data to check in repository ID $($RepoInfo.id) at path $RepoPath"
+            ""
+            "Check all data"
+            "Specify a percentage of total repository data to check at random"
+            "Specify a fixed amount of repository data to check at random"
+        )
+        switch ($MenuChoice) {
+            1 {
+                $RepoCheckCommand = "--read-data"
+                $MenuAddress = 1750
+                break CheckRepositoryDataTypeMenu
+            }
+            2 {
+                Write-Host "What percentage of data would you like to check?"
+                $n = Read-Host
+                $n = $n.Trim("%")
+                if (Validate-Decimal $n) {
+                    $RepoCheckCommand = "--read-data-subset=$($n)%"
+                    $MenuAddress = 1750
+                    break CheckRepositoryDataTypeMenu
+                } else {
+                    Write-Host "Entry could not be parsed as a number!"
+                    pause
+                }
+            }
+            3 {
+                Write-Host "How much data would you like to read?"
+                Write-Host "Integer plus single letter size suffix, i.e. 10G"
+                $n = Read-Host
+                if ((Validate-DataSize -string $n -bytes $false) -ne $false) {
+                    $RepoCheckCommand = "--read-data-subset=$($n)"
+                    $MenuAddress = 1750
+                    break CheckRepositoryDataTypeMenu
+                } else {
+                    Write-Host "Entry could not be parsed correctly!"
+                    pause
+                }
+            }
+        }
     }
 
     :ConfirmCheckRepositoryMetadataOnlyMenu while ($MenuAddress -eq 1740) {
@@ -1391,10 +1479,26 @@ while ($true) {
     }
 
     :CheckRepositoryFileDataMenu while ($MenuAddress -eq 1750) {
-        write-host ""
-        write-host "Not implemented yet.  Press enter to continue"
-        read-host
+        #Get amount of data text for menu
+        if ($($RepoCheckCommand.split("=")).count -eq 1) {
+            $a = "ALL"
+        } else {
+            $a = "$($RepoCheckCommand.split("=")[1]) of"
+        }
+        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+            "Do you want to check $a data in repository ID $($RepoInfo.id) at path $RepoPath"
+            ""
+            "Yes"
+            "No"
+        )
+        if ($MenuChoice -eq 1) {
+            cls
+            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check $RepoCheckCommand"
+            cmd /c $c
+            pause
+        }
         $MenuAddress = 1700
+        break CheckRepositoryFileDataMenu
     }
 
     :BrowseAndRestoreMenu while ($MenuAddress -eq 1800) {
