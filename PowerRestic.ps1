@@ -56,17 +56,17 @@ function Load-ini {
 
     foreach ($line in $RawIni) {
         #Check for exe path
-        if ($line -like "ResticPath=*" -and (test-path ($line.split("="))[1])) {
-            $Script:ResticPath = ($line.split("="))[1]
+        if ($line -like "ResticPath=*" -and (test-path ($line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()))) {
+            $Script:ResticPath = $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()
         #Make an array of pinned repos
         } elseif ($line -like "pin*=*") {
-            $script:Pinned += (($line.split("="))[1]).trim()
+            $script:Pinned += $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()
         #Skip comments, section headers,blank lines, lines starting with a space
         } elseif ($line[0] -in @(";","[",""," ") -or "=" -notin $line.ToCharArray()) {
             #noop
         #Throw everything else in a generic option object
         } else {
-            $script:Options | Add-Member -NotePropertyName (($line.split("="))[0]).trim() (($line.split("="))[1]).trim()
+            $script:Options | Add-Member -NotePropertyName (($line.split("="))[0]).trim() $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()
         }
     }
     if ($script:options.debug -eq 1) {
