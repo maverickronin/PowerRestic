@@ -4,8 +4,6 @@
 #Resets everything else if you're using this in ISE or something
 
 $ErrorActionPreference = 'Stop'
-[string[]] $script:Pinned = @()
-$Options = new-object PSobject
 $ResticPath = $null
 $MenuAddress = 0
 
@@ -44,10 +42,13 @@ function Clear-Variables {
     [System.Collections.ArrayList]$script:RestoreFromQueue = @() #List of items Queued to restore together
     $script:RestoreTo = "" #Folder to restore the item to
     $script:NewRepoPath = "" #Path to create new repo at
-    $script:RepoCheckCommand = "" #Command specifying options for checking repository integerity
+    $script:RepoCheckCommand = "" #Command specifying options for checking repository integrity
 }
 
 function Load-ini {
+    #Reset changable settings
+    [string[]] $script:Pinned = @()
+    $script:Options = new-object PSobject
     #create basic settings file if none is found
     if (!(test-path "PowerRestic.ini")) {
         Make-Ini
@@ -126,10 +127,10 @@ function Check-Settings {
         exit 1
     }
 
-    try {[int]::Parse($script:Options.retries)} catch {$script:Options.retries = 1}
+    try {[int]::Parse($script:Options.retries) | out-null} catch {$script:Options.retries = 1}
     if ($script:Options.retries -lt 1) {$script:Options.retries = 1}
 
-    try {[int]::Parse($script:Options.DisplayLines)} catch {$script:Options.DisplayLines = 1}
+    try {[int]::Parse($script:Options.DisplayLines) | out-null} catch {$script:Options.DisplayLines = 1}
     if ($script:Options.DisplayLines -lt 10) {$script:Options.DisplayLines = 10}
 }
 
@@ -323,10 +324,10 @@ function Read-MenuChoice {
 
     #Single page and flat menu
     if ($ScrollMenu -eq $false -and $FolderMenu -eq $false) {
-        #not sure if something will go
+        #not sure if something will go here
     }
     #Multiple pages and flat menu
-    if ($ScrollMenu -eq $true -and $FolderMenu -eq $false) {
+    if ($ScrollMenu -eq $true -and $FolderMenu -eq $false -and $QueueMenu -eq $False) {
         write-host "Enter for next screen, `"+`" for last screen, `"/`" to exit this menu"
         $AcceptableChoices += "+","/"
     }
@@ -348,11 +349,11 @@ function Read-MenuChoice {
         write-host  "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`" for information about current directory, or `"/`" to exit this menu"
         $AcceptableChoices += "+","-",".","/"
     }
-    if ($ScrollMenu -eq $true  -and $QueueMenu -eq $true) {
+    if ($ScrollMenu -eq $true -and $QueueMenu -eq $true) {
         write-host  "Enter for next screen, `"+`" for last screen, `"-`" to clear the queue, or `"/`" to exit this menu"
         $AcceptableChoices += "+","-","/"
     }
-    if ($ScrollMenu -eq $false  -and $QueueMenu -eq $true) {
+    if ($ScrollMenu -eq $false -and $QueueMenu -eq $true) {
         write-host  "Enter `"-`" to clear the queue or `"/`" to exit this menu"
         $AcceptableChoices += "-","/"
     }
@@ -1192,6 +1193,59 @@ function Validate-DataSize {
     return
 }
 
+function Update-Ini {
+    #appends a sting to the end of the ini file or overwrites the entire file with an array of strings
+    param (
+        [parameter(ParameterSetName="Append")]
+        [string]$AppendLine = "",
+        [parameter(ParameterSetName="Overwrite")]
+        [string[]]$OverwriteLines = @()
+    )
+
+    #Remake ini if missing
+    if ($AppendLine -ne "" -and -not(Test-Path PowerRestic.ini)) {
+        Load-ini
+    }
+
+    #Append single line
+    if ($AppendLine -ne "" -and $OverwriteLines.Count -eq 0) {
+        if ((Get-Content PowerRestic.ini -Raw)[-1] -match '\r' -or (Get-Content PowerRestic.ini -Raw)[-1] -match '\n') {
+            Add-Content -Value $AppendLine -Path PowerRestic.ini -Force
+        } else {
+            Add-Content -Value "`n$AppendLine" -Path PowerRestic.ini -Force
+        }
+    }
+
+    if ($OverwriteLines.Count -gt 0 -and $AppendLine -eq "") {
+        if (Test-Path PowerRestic.ini) {
+            try {
+                del PowerRestic.ini -ErrorAction Stop
+            } catch {
+                throw "Failed to delete PowerRestic.ini"
+            }
+        }
+        $OverwriteLines | Out-File -FilePath PowerRestic.ini -Force
+    }
+}
+
+function Pin-Repository {
+    param (
+        [string]$path
+    )
+    Update-Ini -AppendLine ("pin=" + "$path")
+    Load-ini
+    if ($path -in $script:Pinned) {
+        Write-host "Pinned repository: $path"
+    } else {
+        Write-Host "Failed to pin repository!"
+    }
+    pause
+}
+
+function Unpin-Repository {
+
+}
+
 ###################################################################################################
 #Main loop
 ###################################################################################################
@@ -1298,7 +1352,7 @@ while ($true) {
             "Select a Repo or enter to go back"
         )
         Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
-        if ($MenuChoice -eq "") {
+        if ($MenuChoice -in "/","") {
             #Go back if you just hit enter
             $MenuAddress = 1000
             break ChoosePinnedRepositoryMenu
@@ -1344,6 +1398,22 @@ while ($true) {
     }
 
     :RepositoryOperationMenu while ($MenuAddress -eq 1700) {
+        #Check if repo path is already pinned and add option to do reverse
+        $AlreadyPinned = $null
+        $PinOrUnpin = ""
+        foreach ($repo in $Pinned) {
+            if ($RepoPath -like $repo) {
+                $AlreadyPinned = $true
+                break
+            }
+            $AlreadyPinned = $false
+        }
+        if ($AlreadyPinned -eq $true) {
+            $PinOrUnpin = "Unpin this repository"
+        } else {
+            $PinOrUnpin = "Pin this repository"
+        }
+
         Show-Menu -HeaderLines 3 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
             "$($RepoInfo.repo_path)"
             "Repository ID $($RepoInfo.id)"
@@ -1351,6 +1421,7 @@ while ($true) {
             "Get repository stats"
             "Check repository integrity"
             "Work with snapshots"
+            "$PinOrUnpin"
             "Return to main menu"
             "Exit"
         )
@@ -1364,8 +1435,15 @@ while ($true) {
             }
             2 {$MenuAddress = 1720} #CheckRepositoryMenu
             3 {$MenuAddress = 1710} #SnapshotSelectionMenu
-            4 {$MenuAddress = 0}    #MainMenu
-            5 {exit}
+            4 {
+                if ($AlreadyPinned -eq $true) {
+                    Unpin-Repository $ResticPath
+                } else {
+                    Pin-Repository $RepoPath
+                }
+            }
+            5 {$MenuAddress = 0}    #MainMenu
+            6 {exit}
         }
         break
     }
@@ -1384,7 +1462,7 @@ while ($true) {
         Show-Menu -HeaderLines 2 -IndentHeader $true -FooterLines 4 -IndentFooter $true -MenuLines @(
                 $Snapshots + "" + "Enter a snapshot's number or enter to return"
             )
-            if ($MenuChoice -eq "") {
+            if ($MenuChoice -in "/","") {
                 $MenuAddress = 1700
                 break
             }
