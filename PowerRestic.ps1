@@ -46,6 +46,7 @@ function Clear-Variables {
     $script:RestoreOverwriteOption = "Different" #if/when to overwrite existing files - Different, Newer, Never
     $script:RestoreDeleteOption = $false #If to delete existing files  not in snapshot
     $script:RestoreDryRunOption = $false #Dry run to double check dangerous operations
+    $script:LastRestoreLog = "" #File name of last saved restore log file
 }
 
 function Load-ini {
@@ -115,6 +116,7 @@ function Make-Ini {
     "" | Out-File .\PowerRestic.ini -Append
     "DisplayLines=50" | Out-File .\PowerRestic.ini -Append
     "Retries=3" | Out-File .\PowerRestic.ini -Append
+    "AutoOpenDryRunLog=1" | Out-File .\PowerRestic.ini -Append
 
     Start-Sleep -s 3
 }
@@ -130,11 +132,14 @@ function Check-Settings {
         exit 1
     }
 
+    #Set defaults for missing of invalid setting data
     try {[int]::Parse($script:Options.retries) | out-null} catch {$script:Options.retries = 1}
     if ($script:Options.retries -lt 1) {$script:Options.retries = 1}
 
     try {[int]::Parse($script:Options.DisplayLines) | out-null} catch {$script:Options.DisplayLines = 1}
     if ($script:Options.DisplayLines -lt 10) {$script:Options.DisplayLines = 10}
+
+    if ($script:Options.AutoOpenDryRunLog -notin 0,1) {$script:Options.AutoOpenDryRunLog = 1}
 }
 
 function Show-Menu{
@@ -809,21 +814,6 @@ function Confirm-ExitRestore {
     }
 }
 
-function Restore-SingleItemDryRun {
-    #Runs Restore-Item with dry run option and turns it off if user
-    #confirms results of restore operation
-
-    Restore-Item
-    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -cls $false -MenuLines @(
-        "Are the results of the dry run acceptable?"
-        ""
-        "No"
-        "Yes"
-    )
-    if ($script:MenuChoice -eq 2) {$script:RestoreDryRunOption = $false}
-    return
-}
-
 function Restore-Item {
     #Takes from and to paths and figures out the proper command line based on the inputs
     #Leaving $script:RestoreTo as "" means restore to original location
@@ -880,14 +870,14 @@ function Restore-Item {
     if ($script:RestoreDryRunOption -eq $true) {$c += " --dry-run"}
 
     $ErrorActionPreference = 'Continue'
-        cmd /c $c *>&1 | Tee-Object -Variable output
+        cmd /c $c *>&1 | Tee-Object -Variable restoreOutput
     $ErrorActionPreference = 'Stop'
 
 
     if ($LASTEXITCODE -ne 0) {
-        Restore-ErrorMenu $output
+        Restore-ErrorMenu $restoreOutput
     } else {
-        #
+        Write-RestoreLog $restoreOutput
     }
 }
 
@@ -922,6 +912,37 @@ function Restore-ErrorMenu {
         }
     }
 }
+
+function Write-RestoreLog {
+    param (
+        [string[]]$lines
+    )
+    if (-not(Test-Path ".\Logs")) {mkdir "Logs"|out-null}
+    $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log.txt"
+    $lines | out-file ".\Logs\$($script:LastRestoreLog)"
+}
+
+function Open-LastRestoreLog {
+    cmd /c "start `"`" $(Quote-Path("$pwd" + "\Logs\" + "$LastRestoreLog"))"
+}
+
+function Restore-SingleItemDryRun {
+    #Runs Restore-Item with dry run option and turns it off if user
+    #confirms results of restore operation
+
+    Restore-Item
+    if ($script:Options.AutoOpenDryRunLog -eq 1) {Open-LastRestoreLog}
+    write-host ""
+    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -cls $false -MenuLines @(
+        "Are the results of the dry run acceptable?"
+        ""
+        "No"
+        "Yes"
+    )
+    if ($script:MenuChoice -eq 2) {$script:RestoreDryRunOption = $false}
+    return
+}
+
 
 function Validate-WinPath {
     param (
