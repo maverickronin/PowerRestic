@@ -71,7 +71,10 @@ function Load-ini {
             #noop
         #Throw everything else in a generic option object
         } else {
-            $script:Options | Add-Member -NotePropertyName (($line.split("="))[0]).trim() $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()
+            #Skip duplicate names
+            if ((($line.split("="))[0]).trim() -notin $script:Options.PSObject.Properties.Name) {
+                $script:Options | Add-Member -NotePropertyName (($line.split("="))[0]).trim() $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim() | out-null
+            }
         }
     }
     if ($script:options.debug -eq 1) {
@@ -133,13 +136,25 @@ function Check-Settings {
     }
 
     #Set defaults for missing of invalid setting data
-    try {[int]::Parse($script:Options.retries) | out-null} catch {$script:Options.retries = 1}
-    if ($script:Options.retries -lt 1) {$script:Options.retries = 1}
+    if ("Retries" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "Retries" 3  | out-null
+    } else {
+        try {[int]::Parse($script:Options.Retries) | out-null} catch {$script:Options.Retries = 3}
+        if ($script:Options.Retries -lt 1) {$script:Options.Retries = 3}
+    }
 
-    try {[int]::Parse($script:Options.DisplayLines) | out-null} catch {$script:Options.DisplayLines = 1}
-    if ($script:Options.DisplayLines -lt 10) {$script:Options.DisplayLines = 10}
+    if ("DisplayLines" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "DisplayLines" 10  | out-null
+    } else {
+        try {[int]::Parse($script:Options.DisplayLines) | out-null} catch {$script:Options.DisplayLines = 10}
+        if ($script:Options.DisplayLines -lt 10) {$script:Options.DisplayLines = 10}
+    }
 
-    if ($script:Options.AutoOpenDryRunLog -notin 0,1) {$script:Options.AutoOpenDryRunLog = 1}
+    if ("AutoOpenDryRunLog" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "AutoOpenDryRunLog" 1  | out-null
+    } else {
+        if ($script:Options.AutoOpenDryRunLog -notin 0,1) {$script:Options.AutoOpenDryRunLog = 1}
+    }
 }
 
 function Show-Menu{
@@ -942,7 +957,6 @@ function Restore-SingleItemDryRun {
     if ($script:MenuChoice -eq 2) {$script:RestoreDryRunOption = $false}
     return
 }
-
 
 function Validate-WinPath {
     param (
