@@ -43,6 +43,9 @@ function Clear-Variables {
     $script:RestoreTo = "" #Folder to restore the item to
     $script:NewRepoPath = "" #Path to create new repo at
     $script:RepoCheckCommand = "" #Command specifying options for checking repository integrity
+    $script:RestoreOverwriteOption = "Different" #if/when to overwrite existing files - Different, Newer, Never
+    $script:RestoreDeleteOption = $false #If to delete existing files  not in snapshot
+    $script:RestoreDryRunOption = $false #Dry run to double check dangerous operations
 }
 
 function Load-ini {
@@ -151,9 +154,13 @@ function Show-Menu{
         [bool]$RestoreMenu = $false,
         [Parameter()]
         [bool]$QueueMenu = $false,
+        [Parameter()]
+        [bool]$NoEnter = $false,
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
-        [string[]]$MenuLines
+        [string[]]$MenuLines,
+        [Parameter()]
+        [bool]$cls = $true
     )
     #Turns an array of strings into a numbered menu
     #Headers and footers which are not turned into numbered options can be specified
@@ -168,7 +175,7 @@ function Show-Menu{
     #Reset choice
     try {remove-variable -name MenuChoice -Scope script -ErrorAction Stop} catch {}
 
-    cls
+    if ($cls -eq $true) {cls}
 
     #Subtract header and footer lines to get number of menu options
     $NumberOfOptions = $MenuLines.Count - ($HeaderLines + $FooterLines)
@@ -180,7 +187,7 @@ function Show-Menu{
         } else {
             $script:MenuPage = 1
         }
-        Split-Menu -HeaderLines $HeaderLines -IndentHeader $IndentHeader -FooterLines $FooterLines -IndentFooter $IndentFooter -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -MenuLines $MenuLines
+        Split-Menu -HeaderLines $HeaderLines -IndentHeader $IndentHeader -FooterLines $FooterLines -IndentFooter $IndentFooter -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -NoEnter $NoEnter -MenuLines $MenuLines
         return
     }
     #Count number of digits in total number of options to
@@ -235,7 +242,7 @@ function Show-Menu{
     write-host $output
 
     #Input is taken and validated in a separate function
-    Read-MenuChoice -NumberOfOptions $NumberOfOptions -ScrollMenu $ScrollMenu -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu
+    Read-MenuChoice -NumberOfOptions $NumberOfOptions -ScrollMenu $ScrollMenu -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -NoEnter $NoEnter
 }
 
 function Split-Menu {
@@ -255,6 +262,8 @@ function Split-Menu {
         [bool]$RestoreMenu = $false,
         [Parameter()]
         [bool]$QueueMenu = $false,
+        [Parameter()]
+        [bool]$NoEnter = $false,
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string[]]$MenuLines
@@ -279,7 +288,7 @@ function Split-Menu {
     #Call Show-Menu once for each page
     while ($true) {
         $PageLines = ($MenuHeader + $MenuOptions[(($script:MenuPage - 1) * $Options.DisplayLines)..((($script:MenuPage - 1) * $Options.DisplayLines) + ($Options.DisplayLines - 1))] + $MenuFooter + "Page $script:MenuPage/$NumberOfPages")
-        Show-Menu -HeaderLines $HeaderLines -IndentHeader $IndentHeader -FooterLines $FooterLines -IndentFooter $IndentFooter -ScrollMenu $ScrollMenu -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -MenuLines ([string[]]$PageLines)
+        Show-Menu -HeaderLines $HeaderLines -IndentHeader $IndentHeader -FooterLines $FooterLines -IndentFooter $IndentFooter -ScrollMenu $ScrollMenu -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -NoEnter $NoEnter -MenuLines ([string[]]$PageLines)
         #Adjust page number
         if ($script:MenuChoice -eq "") {$script:MenuPage++}
         if ($script:MenuChoice -in "+") {$script:MenuPage = $script:MenuPage -1}
@@ -308,7 +317,9 @@ function Read-MenuChoice {
         [Parameter()]
         [bool]$RestoreMenu = $false,
         [Parameter()]
-        [bool]$QueueMenu = $false
+        [bool]$QueueMenu = $false,
+        [Parameter()]
+        [bool]$NoEnter = $false
     )
     #Validates that input is within the number of listed choices
     #Adds other input options based on $ScrollMenu and $FolderMenu
@@ -318,7 +329,7 @@ function Read-MenuChoice {
 
     #Start with all the numbers options plus just hitting enter
     $AcceptableChoices = 0..$NumberOfOptions
-    $AcceptableChoices += ""
+    #if ($NoEnter -eq $false) {$AcceptableChoices += ""}
 
     #Add options for each combination of $ScrollMenu and $FolderMenu
 
@@ -362,7 +373,8 @@ function Read-MenuChoice {
     $Script:MenuChoice = read-host
     #Make sure that numbers count as ints to prevent problems in other places
     try {$Script:MenuChoice = [int]::Parse($Script:MenuChoice)} catch {}
-    while ($Script:MenuChoice -notin $AcceptableChoices) {
+    #Double condition because -in/-notin counts "" as in any array
+    while ($Script:MenuChoice -notin $AcceptableChoices -or ($NoEnter -eq $true -and $Script:MenuChoice -eq "")) {
         write-host ""
         write-host "Please enter a valid choice."
         write-host ""
@@ -797,6 +809,21 @@ function Confirm-ExitRestore {
     }
 }
 
+function Restore-SingleItemDryRun {
+    #Runs Restore-Item with dry run option and turns it off if user
+    #confirms results of restore operation
+
+    Restore-Item
+    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -cls $false -MenuLines @(
+        "Are the results of the dry run acceptable?"
+        ""
+        "No"
+        "Yes"
+    )
+    if ($script:MenuChoice -eq 2) {$script:RestoreDryRunOption = $false}
+    return
+}
+
 function Restore-Item {
     #Takes from and to paths and figures out the proper command line based on the inputs
     #Leaving $script:RestoreTo as "" means restore to original location
@@ -840,6 +867,17 @@ function Restore-Item {
         #restic.exe -r B:\Repo --insecure-no-password restore "abcdef:/C/Dir1/Dir2/" --include "file.exe" --target "C:\Dir3\Dir4\"
         $c += " $(Quote-Path("$script:SnapID" + ":" + "$(Pop-NixDirectory($($script:RestoreFromSingle.path)))" + "/"))" + " --include $(Quote-Path($(Cleave-FileName($($script:RestoreFromSingle.path)))))" + " --target $(Quote-Path("$script:RestoreTo"))" + " -vv"
     }
+
+    #Overwrite, delete, and dry run options
+
+    switch ($script:RestoreOverwriteOption) {
+        #"All" {$c += " --overwrite always"}
+        "Different" { } #Noop
+        "Newer" {$c += " --overwrite if-newer"}
+        "Never" {$c += " --overwrite never"}
+    }
+    if ($script:RestoreDeleteOption) {$c += " --delete"}
+    if ($script:RestoreDryRunOption -eq $true) {$c += " --dry-run"}
 
     $ErrorActionPreference = 'Continue'
         cmd /c $c *>&1 | Tee-Object -Variable output
@@ -1244,6 +1282,34 @@ function Pin-Repository {
 
 function Unpin-Repository {
 
+}
+
+function Get-RestoreOptionsWarningString {
+    #Returns a sting to warn about overwrites and deletes during restore operation base on set options
+    if ($script:RestoreOverwriteOption -eq "Different" -and $script:RestoreDeleteOption -eq $false) {
+        "OVERWRITE existing files in destination if the snapshot's version is DIFFERENT, leave files in destination that are not in snapshot (Default)"
+    } elseif ($script:RestoreOverwriteOption -eq "Different" -and $script:RestoreDeleteOption -eq $true) {
+        "OVERWRITE existing files in destination if the snapshot's version is DIFFERENT, DELETE files in destination that are not in snapshot"
+    } elseif ($script:RestoreOverwriteOption -eq "Newer" -and $script:RestoreDeleteOption -eq $false) {
+        "OVERWRITE existing files in destination if the snapshot's version is NEWER, leave files in destination that are not in snapshot"
+    } elseif ($script:RestoreOverwriteOption -eq "Newer" -and $script:RestoreDeleteOption -eq $true) {
+        "OVERWRITE existing files in destination if the snapshot's version is NEWER, DELETE files in destination that are not in snapshot"
+    } elseif ($script:RestoreOverwriteOption -eq "Never" -and $script:RestoreDeleteOption -eq $false) {
+        "Do NOT OVERWRITE existing copies of files in destination with those in snapshot, leave files in destination that are not in snapshot"
+    } elseif ($script:RestoreOverwriteOption -eq "Never" -and $script:RestoreDeleteOption -eq $true) {
+        "Do NOT OVERWRITE existing copies of files in destination with those in snapshot, DELETE files in destination that are not in snapshot"
+    }
+}
+
+function Get-RestoreDryRunWarningString {
+    #Returns sting to warn about including a dry run of a restore operation or not based on set option
+    if ($script:RestoreDryRunOption -eq $true) {
+        "WITH a DRY RUN to preview results"
+        return
+    } else {
+        "WITHOUT a DRY RUN to preview results"
+        return
+    }
 }
 
 ###################################################################################################
@@ -1702,7 +1768,7 @@ while ($true) {
         break BrowseAndRestoreMenu
     }
 
-    :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810){
+    :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810) {
         Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines @(
             "$(Convert-NixPathToWin($RestoreFromSingle.path)) selected"
             ""
@@ -1719,7 +1785,13 @@ while ($true) {
                 $MenuAddress = 1820
                 break RestoreSingleItemDestinationMenu
             }
-            2 {write-host "Not implemented yet"; pause}
+            2 {
+                write-host "Not implemented yet"
+                pause
+                break RestoreSingleItemDestinationMenu
+                $MenuAddress = 1820
+                break RestoreSingleItemDestinationMenu
+            }
             3 {
                 $p = Read-WinPath
                 if ($p -ne "") {
@@ -1735,8 +1807,54 @@ while ($true) {
         break RestoreSingleItemDestinationMenu
     }
 
-    :RestoreSingleItemOptionsMenu while ($MenuAddress -eq 1820){
-        #Not implemented, skip to next
+    :RestoreSingleItemOptionsMenu while ($MenuAddress -eq 1820) {
+        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+            "Select restore options"
+            ""
+            "OVERWRITE existing files in destination if the snapshot's version is DIFFERENT, leave files in destination that are not in snapshot (Default)"
+            "OVERWRITE existing files in destination if the snapshot's version is DIFFERENT, DELETE files in destination that are not in snapshot"
+            "OVERWRITE existing files in destination if the snapshot's version is NEWER, leave files in destination that are not in snapshot"
+            "OVERWRITE existing files in destination if the snapshot's version is NEWER, DELETE files in destination that are not in snapshot"
+            "Do NOT OVERWRITE existing copies of files in destination with those in snapshot, leave files in destination that are not in snapshot"
+            "Do NOT OVERWRITE existing copies of files in destination with those in snapshot, DELETE files in destination that are not in snapshot"
+        )
+            switch ($MenuChoice) {
+                1 {
+                    $RestoreOverwriteOption = "Different"
+                    $RestoreDeleteOption = $false
+                }
+                2 {
+                    $RestoreOverwriteOption = "Different"
+                    $RestoreDeleteOption = $true
+                }
+                3 {
+                    $RestoreOverwriteOption = "Newer"
+                    $RestoreDeleteOption = $false
+                }
+                4 {
+                    $RestoreOverwriteOption = "Newer"
+                    $RestoreDeleteOption = $true
+                }
+                5 {
+                    $RestoreOverwriteOption = "Never"
+                    $RestoreDeleteOption = $false
+                }
+                6 {
+                    $RestoreOverwriteOption = "Never"
+                    $RestoreDeleteOption = $true
+                }
+            }
+            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+                "Perform a dry first?"
+                ""
+                "Yes"
+                "No"
+            )
+            if ($MenuChoice -eq 1) {
+                $RestoreDryRunOption = $true
+            } else {
+                $RestoreDryRunOption = $false
+            }
         $MenuAddress = 1830
         break RestoreSingleItemOptionsMenu
     }
@@ -1744,16 +1862,20 @@ while ($true) {
     :ConfirmRestoreSingleItemMenu while ($MenuAddress -eq 1830) {
         #If RestoreTo blank means to original location
         if ($RestoreTo -eq "") {
-            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
                 "Restore $(Convert-NixPathToWin($RestoreFromSingle.path)) to original location?"
+                "$(Get-RestoreOptionsWarningString)"
+                "$(Get-RestoreDryRunWarningString)"
                 ""
                 "Yes"
                 "No"
             )
         #else it's restore to different location
         } else {
-            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
                 "Restore $(Convert-NixPathToWin($RestoreFromSingle.path)) to $($RestoreTo)?"
+                "$(Get-RestoreOptionsWarningString)"
+                "$(Get-RestoreDryRunWarningString)"
                 ""
                 "Yes"
                 "No"
@@ -1761,8 +1883,15 @@ while ($true) {
         }
         #Restore item and go back to BrowseAndRestoreMenu
         if ($MenuChoice -eq 1) {
-            Restore-Item
-            pause
+            #This will change $RestoreDryRunOption to false if the user approves the results
+            if ($RestoreDryRunOption -eq $true) {
+                Restore-SingleItemDryRun
+            }
+            #Skip real restore if $RestoreDryRunOption is not changed and go back to browse menu
+            if ($RestoreDryRunOption -eq $false) {
+                Restore-Item
+                pause
+            }
         }
         $MenuAddress = 1800
         break ConfirmRestoreSingleItemMenu
