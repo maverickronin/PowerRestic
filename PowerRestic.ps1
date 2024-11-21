@@ -2142,27 +2142,22 @@ while ($true) {
     :ConfirmRestoreSingleItemMenu while ($MenuAddress -eq 1830) {
         #Displays restore option and confirms operation with user before running restore
 
+        #Build menu array
+        [string[]]$m = @()
         #RestoreTo -eq "" means to original location
         if ($RestoreTo -eq "") {
-            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
-                "Restore $(Convert-NixPathToWin($RestoreFromSingle.path)) to original location?"
-                "$(Get-RestoreOptionsWarningString)"
-                "$(Get-RestoreDryRunWarningString)"
-                ""
-                "Yes"
-                "No"
-            )
-        #else it's restore to different location
+            $m += "Restore $($script:RestoreFromQueue.count) items to original locations?"
         } else {
-            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
-                "Restore $(Convert-NixPathToWin($RestoreFromSingle.path)) to $($RestoreTo)?"
-                "$(Get-RestoreOptionsWarningString)"
-                "$(Get-RestoreDryRunWarningString)"
-                ""
-                "Yes"
-                "No"
-            )
+            $m += "Restore $($script:RestoreFromQueue.count) items to $($RestoreTo)?"
         }
+        $m += "$(Get-RestoreOptionsWarningString)"
+        $m += "$(Get-RestoreDryRunWarningString)"
+        $m += ""
+        $m += "Yes"
+        $m += "No"
+
+        Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines $m
+
         #Restore item and go back to BrowseAndRestoreMenu
         if ($MenuChoice -eq 1) {
             #This will change $RestoreDryRunOption to false if the user approves the results
@@ -2175,6 +2170,7 @@ while ($true) {
                 pause
             }
         }
+
         $MenuAddress = 1800 #BrowseAndRestoreMenu
         break ConfirmRestoreSingleItemMenu
     }
@@ -2255,27 +2251,20 @@ while ($true) {
     :ConfirmRestoreQueueMenu while ($MenuAddress -eq 1860) {
         #Displays restore option and confirms operation with user before running restore
 
-        #RestoreTo -eq "" means to original location
+        #Build menu array
+        [string[]]$m = @()
         if ($RestoreTo -eq "") {
-            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
-                "Restore $($script:RestoreFromQueue.count) items to original locations?"
-                "$(Get-RestoreOptionsWarningString)"
-                "$(Get-RestoreDryRunWarningString)"
-                ""
-                "Yes"
-                "No"
-            )
-        #else it's restore to different location
+            $m += "Restore $($script:RestoreFromQueue.count) items to original locations?"
         } else {
-            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
-                "Restore $($script:RestoreFromQueue.count) items to $($RestoreTo)?"
-                "$(Get-RestoreOptionsWarningString)"
-                "$(Get-RestoreDryRunWarningString)"
-                ""
-                "Yes"
-                "No"
-            )
+            $m += "Restore $($script:RestoreFromQueue.count) items to $($RestoreTo)?"
         }
+        $m += "$(Get-RestoreOptionsWarningString)"
+        $m += "$(Get-RestoreDryRunWarningString)"
+        $m += ""
+        $m += "Yes"
+        $m += "No"
+
+        Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines $m
 
         #Restore items and go back to BrowseAndRestoreMenu
 
