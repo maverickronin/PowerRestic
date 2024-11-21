@@ -1595,7 +1595,6 @@ function Get-RestoreDryRunWarningString {
 #Jumping between menus is controlled by changing the menu address variable and breaking the
 ##current menu while loop
 #Functions are called in order according to menu logic and generally modify script scope variables
-##Being more general, menus are an exception and only reference the script settings externally
 ###################################################################################################
 #Addresses
 ###################################################################################################
@@ -1636,8 +1635,8 @@ while ($true) {
             "Exit"
         )
         switch ($MenuChoice) {
-            1 {$MenuAddress = 1000}
-            2 {$MenuAddress = 2000}
+            1 {$MenuAddress = 1000} #TopRepositoryMenu
+            2 {$MenuAddress = 2000} #TopBackupTaskMenu
             3 {exit}
         }
         break
@@ -1695,7 +1694,7 @@ while ($true) {
         )
         Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
         if ($MenuChoice -in "/","") {
-            #Go back if you just hit enter
+            #Go back if you just hit enter of slash
             $MenuAddress = 1000
             break ChoosePinnedRepositoryMenu
         }
@@ -1756,6 +1755,7 @@ while ($true) {
             $PinOrUnpin = "Pin this repository"
         }
 
+        #Now we get to the menu
         Show-Menu -HeaderLines 3 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
             "$($RepoInfo.repo_path)"
             "Repository ID $($RepoInfo.id)"
@@ -1798,14 +1798,14 @@ while ($true) {
             cls
             Write-Host "No snapshots found in $RepoPath!"
             pause
-            $MenuAddress = 1000
+            $MenuAddress = 1000 #TopRepositoryMenu
             break
         }
         Show-Menu -HeaderLines 2 -IndentHeader $true -FooterLines 4 -IndentFooter $true -MenuLines @(
                 $Snapshots + "" + "Enter a snapshot's number or enter to return"
             )
             if ($MenuChoice -in "/","") {
-                $MenuAddress = 1700
+                $MenuAddress = 1700 #RepositoryOperationMenu
                 break
             }
             $SnapID = $SnapIDs[$MenuChoice - 1]
@@ -1849,7 +1849,7 @@ while ($true) {
         switch ($MenuChoice) {
             1 {
                 $RepoCheckCommand = "--read-data"
-                $MenuAddress = 1750
+                $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
                 break CheckRepositoryDataTypeMenu
             }
             2 {
@@ -1858,7 +1858,7 @@ while ($true) {
                 $n = $n.Trim("%")
                 if (Validate-Decimal $n) {
                     $RepoCheckCommand = "--read-data-subset=$($n)%"
-                    $MenuAddress = 1750
+                    $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
                     break CheckRepositoryDataTypeMenu
                 } else {
                     Write-Host "Entry could not be parsed as a number!"
@@ -1871,7 +1871,7 @@ while ($true) {
                 $n = Read-Host
                 if ((Validate-DataSize -string $n -bytes $false) -ne $false) {
                     $RepoCheckCommand = "--read-data-subset=$($n)"
-                    $MenuAddress = 1750
+                    $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
                     break CheckRepositoryDataTypeMenu
                 } else {
                     Write-Host "Entry could not be parsed correctly!"
@@ -1894,7 +1894,7 @@ while ($true) {
             cmd /c $c
             pause
         }
-        $MenuAddress = 1700
+        $MenuAddress = 1700 #RepositoryOperationMenu
         break ConfirmCheckRepositoryMetadataOnlyMenu
     }
 
@@ -1917,11 +1917,15 @@ while ($true) {
             cmd /c $c
             pause
         }
-        $MenuAddress = 1700
+        $MenuAddress = 1700 #RepositoryOperationMenu
         break CheckRepositoryFileDataMenu
     }
 
     :BrowseAndRestoreMenu while ($MenuAddress -eq 1800) {
+        #Reads and displays contents  of a snapshot.  Starts at the snapshot's root and lets the user drill
+        #down to lower level directories and files with options to view info and restore single files or
+        #entire folders
+
         #Just get root path when initially entering menu
         if ($KeepPage -eq $false) {Check-RootFolderPath}
         #Cycle though menu
@@ -1941,10 +1945,10 @@ while ($true) {
                     Confirm-ExitRestore
                     #Exit choices from previous menus
                     if ($MenuChoice -in 1,"/") {
-                        $MenuAddress = 1710
+                        $MenuAddress = 1710 #SnapshotSelectionMenu
                     #Restore queued items
                     } elseif ($MenuChoice -eq 2) {
-                        $MenuAddress = 1840
+                        $MenuAddress = 1840 #RestoreQueueDestinationMenu
                         $KeepPage = $true
                     #go back to last page if not exiting or restoring
                     } elseif ($MenuChoice -eq 3) {
@@ -1981,7 +1985,7 @@ while ($true) {
                         2 {
                             $RestoreFromSingle = $FolderData[1]
                             $KeepPage = $true
-                            $MenuAddress = 1810
+                            $MenuAddress = 1810 #RestoreSingleItemDestinationMenu
                             break BrowseAndRestoreMenu
                         }
                         #Quick restore to original location
@@ -1999,7 +2003,7 @@ while ($true) {
                 #####################
                 } elseif ($MenuChoice -in @("*")) {
                     $KeepPage = $true
-                    $MenuAddress = 1840
+                    $MenuAddress = 1840 #RestoreQueueDestinationMenu
                     break BrowseAndRestoreMenu
                 ####################
                 #Choosing a new item
@@ -2024,7 +2028,7 @@ while ($true) {
                             2 {
                                 $RestoreFromSingle = $BrowseChoice
                                 $KeepPage = $true
-                                $MenuAddress = 1810
+                                $MenuAddress = 1810 #RestoreSingleItemDestinationMenu
                                 break BrowseAndRestoreMenu
                             }
                             #Quick restore to original location
@@ -2045,6 +2049,8 @@ while ($true) {
     }
 
     :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810) {
+        #Pick destination for a single item chosen for restore
+
         Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines @(
             "$(Convert-NixPathToWin($RestoreFromSingle.path)) selected"
             ""
@@ -2058,40 +2064,42 @@ while ($true) {
         switch ($MenuChoice) {
             1 {
                 $RestoreTo = ""
-                $MenuAddress = 1820
+                $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
                 break RestoreSingleItemDestinationMenu
             }
             2 {
                 write-host "Not implemented yet"
                 pause
                 break RestoreSingleItemDestinationMenu
-                $MenuAddress = 1820
+                $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
                 break RestoreSingleItemDestinationMenu
             }
             3 {
                 $p = Read-WinPath
                 if ($p -ne "") {
                     $RestoreTo = $p
-                    $MenuAddress = 1820
+                    $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
                     break RestoreSingleItemDestinationMenu
                 } else {
                     break RestoreSingleItemDestinationMenu
                 }
             }
         }
-        $MenuAddress = 1800
+        $MenuAddress = 1800 #BrowseAndRestoreMenu
         break RestoreSingleItemDestinationMenu
     }
 
     :RestoreSingleItemOptionsMenu while ($MenuAddress -eq 1820) {
         Ask-RestoreOptions
         Ask-DryRun
-        $MenuAddress = 1830
+        $MenuAddress = 1830 #ConfirmRestoreSingleItemMenu
         break RestoreSingleItemOptionsMenu
     }
 
     :ConfirmRestoreSingleItemMenu while ($MenuAddress -eq 1830) {
-        #If RestoreTo blank means to original location
+        #Displays restore option and confirms operation with user before running restore
+
+        #RestoreTo -eq "" means to original location
         if ($RestoreTo -eq "") {
             Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
                 "Restore $(Convert-NixPathToWin($RestoreFromSingle.path)) to original location?"
@@ -2124,20 +2132,25 @@ while ($true) {
                 pause
             }
         }
-        $MenuAddress = 1800
+        $MenuAddress = 1800 #BrowseAndRestoreMenu
         break ConfirmRestoreSingleItemMenu
     }
 
     :RestoreQueueDestinationMenu while ($MenuAddress -eq 1840) {
+        #Destination options for queued items as well checking and editing queue
+
+        #Go back if the queue is empty
         if (Check-RestoreFromQueueEmpty) {
             Warn-RestoreFromQueueEmpty
-            $MenuAddress = 1800
+            $MenuAddress = 1800 #BrowseAndRestoreMenu
             break ViewRestoreQueue
         }
-        #Check if items have overlapping paths that may overwrite each other and add warning if needed
+
+        #Build menu array
         [string[]]$m = @()
         $m += "$($script:RestoreFromQueue.count) items selected"
         $l = 2
+        #Check if items have overlapping paths that may overwrite each other and add warning if needed
         if (Check-RestoreFromQueueConflict -eq $true) {
             $m += "WARNING: Some items chosen for restore have overlapping paths.  Continuing may lead to unexpected results."
             $l++
@@ -2150,30 +2163,31 @@ while ($true) {
         $m += "Clear restore queue"
         $m += ""
         $m += "Enter to return to last screen"
+
         Show-Menu -HeaderLines $l -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines $m
 
         switch ($MenuChoice) {
             1 {
                 $RestoreTo = ""
-                $MenuAddress = 1850
+                $MenuAddress = 1850 #RestoreQueueOptionsMenu
                 break RestoreQueueDestinationMenu
             }
             2 {
-                $MenuAddress = 1850
+                $MenuAddress = 1850 #RestoreQueueOptionsMenu
                 break RestoreQueueDestinationMenu
             }
             3 {
                 $p = Read-WinPath
                 if ($p -ne "") {
                     $RestoreTo = $p
-                    $MenuAddress = 1850
+                    $MenuAddress = 1850 #RestoreQueueOptionsMenu
                     break RestoreQueueDestinationMenu
                 } else {
                     break RestoreQueueDestinationMenu
                 }
             }
             4 {
-                $MenuAddress = 1870
+                $MenuAddress = 1870 #ViewRestoreQueue
                 break RestoreQueueDestinationMenu
             }
             5 {
@@ -2181,7 +2195,7 @@ while ($true) {
                 break RestoreQueueDestinationMenu
             }
         }
-        $MenuAddress = 1800
+        $MenuAddress = 1800 #BrowseAndRestoreMenu
         break RestoreQueueDestinationMenu
     }
 
@@ -2196,7 +2210,9 @@ while ($true) {
     }
 
     :ConfirmRestoreQueueMenu while ($MenuAddress -eq 1860) {
-        #If RestoreTo blank means to original location
+        #Displays restore option and confirms operation with user before running restore
+
+        #RestoreTo -eq "" means to original location
         if ($RestoreTo -eq "") {
             Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
                 "Restore $($script:RestoreFromQueue.count) items to original locations?"
@@ -2217,6 +2233,7 @@ while ($true) {
                 "No"
             )
         }
+
         #Restore items and go back to BrowseAndRestoreMenu
 
         #Just restore everything at once
@@ -2234,14 +2251,16 @@ while ($true) {
         } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Individual") {
             Restore-Queue -IndividualDryRuns $true
         }
-        $MenuAddress = 1800
+        $MenuAddress = 1800 #BrowseAndRestoreMenu
         break ConfirmRestoreQueueMenu
     }
 
     :ViewRestoreQueue while ($MenuAddress -eq 1870) {
+        #View restore queue and remove individual items
+        
         if (Check-RestoreFromQueueEmpty) {
             Warn-RestoreFromQueueEmpty
-            $MenuAddress = 1800
+            $MenuAddress = 1800 #BrowseAndRestoreMenu
             break ViewRestoreQueue
         }
         $KeepPage = $false
@@ -2254,11 +2273,11 @@ while ($true) {
         if ($MenuChoice -is [int]) {
             $RestoreFromQueue.Remove($RestoreFromQueue[$MenuChoice - 1])
         } elseif ($MenuChoice -in @("/","")) {
-            $MenuAddress = 1840
+            $MenuAddress = 1840 #RestoreQueueDestinationMenu
             break ViewRestoreQueue
         } elseif ($MenuChoice -eq "-") {
             Clear-RestoreFromQueue
-            $MenuAddress = 1800
+            $MenuAddress = 1800 #BrowseAndRestoreMenu
             break ViewRestoreQueue
         }
     }
