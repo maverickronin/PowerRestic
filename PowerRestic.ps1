@@ -1368,6 +1368,8 @@ function Create-Repo {
 }
 
 function Validate-Decimal {
+    #Checks that input can be parsed as a decimal
+
     param ($number)
     try {
         [decimal]::Parse($number)|Out-Null
@@ -1377,6 +1379,47 @@ function Validate-Decimal {
     }
     $true
     return
+}
+
+function Validate-Percentage {
+    #Checks if a number can be interpreted as a percentage in either a 0-1 scale or a 0-100 scale
+    #Excludes 0% and 100%
+
+    param (
+        [Parameter(Mandatory = $true)]
+        $number,
+        [Parameter(ParameterSetName='Hundred')]
+        [switch]$Hundred,
+        [Parameter(ParameterSetName='One')]
+        [switch]$One
+    )
+
+    try {
+        $number = [decimal]::Parse($number)
+    } catch {
+        $false
+        return
+    }
+
+    if ($Hundred) {
+        if ($number -gt 0 -and $number -lt 100) {
+            $true
+            return
+        } else {
+            $false
+            return
+        }
+    }
+
+    if ($One) {
+        if ($number -gt 0 -and $number -lt 1) {
+            $true
+            return
+        } else {
+            $false
+            return
+        }
+    }
 }
 
 function Validate-DataSize {
@@ -1856,12 +1899,12 @@ while ($true) {
                 Write-Host "What percentage of data would you like to check?"
                 $n = Read-Host
                 $n = $n.Trim("%")
-                if (Validate-Decimal $n) {
+                if ((Validate-Decimal $n) -and (Validate-Percentage -number $n -Hundred)) {
                     $RepoCheckCommand = "--read-data-subset=$($n)%"
                     $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
                     break CheckRepositoryDataTypeMenu
                 } else {
-                    Write-Host "Entry could not be parsed as a number!"
+                    Write-Host "Entry could not be parsed as a percentage!"
                     pause
                 }
             }
@@ -1898,7 +1941,7 @@ while ($true) {
         break ConfirmCheckRepositoryMetadataOnlyMenu
     }
 
-    :CheckRepositoryFileDataMenu while ($MenuAddress -eq 1750) {
+    :ConfirmCheckRepositoryFileDataMenu while ($MenuAddress -eq 1750) {
         #Get amount of data text for menu
         if ($($RepoCheckCommand.split("=")).count -eq 1) {
             $a = "ALL"
@@ -1918,7 +1961,7 @@ while ($true) {
             pause
         }
         $MenuAddress = 1700 #RepositoryOperationMenu
-        break CheckRepositoryFileDataMenu
+        break ConfirmCheckRepositoryFileDataMenu
     }
 
     :BrowseAndRestoreMenu while ($MenuAddress -eq 1800) {
@@ -2257,7 +2300,7 @@ while ($true) {
 
     :ViewRestoreQueue while ($MenuAddress -eq 1870) {
         #View restore queue and remove individual items
-        
+
         if (Check-RestoreFromQueueEmpty) {
             Warn-RestoreFromQueueEmpty
             $MenuAddress = 1800 #BrowseAndRestoreMenu
