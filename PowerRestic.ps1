@@ -2218,9 +2218,9 @@ while ($true) {
         [string[]]$m = @()
         #RestoreTo -eq "" means to original location
         if ($RestoreTo -eq "") {
-            $m += "Restore $($script:RestoreFromQueue.count) items to original locations?"
+            $m += "Restore $($RestoreFromSingle.name) to original location?"
         } else {
-            $m += "Restore $($script:RestoreFromQueue.count) items to $($RestoreTo)?"
+            $m += "Restore $($RestoreFromSingle.name) to $($RestoreTo)?"
         }
         $m += "$(Get-RestoreOptionsWarningString)"
         $m += "$(Get-RestoreDryRunWarningString)"
