@@ -163,6 +163,43 @@ function Check-Settings {
     } else {
         if ($script:Options.AutoOpenDryRunLog -notin 0,1) {$script:Options.AutoOpenDryRunLog = 1}
     }
+
+    if ("LogPath" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "LogPath" "Logs\"  | out-null
+    } else {
+        #Test if value is valid as either and absolute or relative path
+        $a = Validate-WinPath ($script:Options.LogPath).trim("\")
+        $r = Validate-WinPath ($script:Options.LogPath).trim("\") -Relative
+        if ($a[0] -eq $true) {
+            $script:Options.LogPath = $($a[1]).trim("\") + "\"
+        } elseif ($r[0] -eq $true) {
+            $script:Options.LogPath = $($r[1]).trim("\") + "\"
+        } else {
+            $script:Options.LogPath = "Logs\"
+        }
+    }
+}
+
+function Create-LogPath {
+    #Creates missing subfolders in $script:Options.LogPath
+
+    if (Test-Path $script:Options.LogPath) {return}
+
+    $folders = ($script:Options.LogPath).split("\")
+    $builtPath = ""
+    foreach ($folder in $folders) {
+        if ($folder -eq "") {continue}
+        if (test-path $folder) {
+            $builtPath += $folder + "\"
+        } else {
+            mkdir ($builtPath + "\" + $folder) | out-null
+            $builtPath += $folder + "\"
+        }
+    }
+
+    if (-not(Test-Path $script:Options.LogPath)) {
+
+    }
 }
 
 function Show-Menu{
@@ -1038,13 +1075,13 @@ function Write-RestoreLog {
         [string[]]$lines
     )
 
-    if (-not(Test-Path ".\Logs")) {mkdir "Logs"|out-null}
+    if (-not(Test-Path $script:Options.LogPath)) {Create-LogPath}
     if ($script:RestoreDryRunOption -eq $false) {
         $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log.txt"
     } else {
         $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log_Dry_Run.txt"
     }
-    $lines | out-file ".\Logs\$($script:LastRestoreLog)"
+    $lines | out-file "$($script:Options.LogPath)\$($script:LastRestoreLog)"
 }
 
 function Open-RestoreLog {
@@ -1096,9 +1133,11 @@ function Confirm-DryRunQueueGroup {
 function Validate-WinPath {
     #Some simple checks to try and make sure string input is a valid windows path
     #returns $false or an array of $true and a fixed path because this will fix extra whitespace and trailing dots
+    #Checks for being a valid absolute path by default.  Switch to check as a relative path instead
 
     param (
-        [string]$pathIn
+        [string]$pathIn,
+        [switch]$Relative
     )
 
     $illegalChars = @("<",">",":","`"","/","|","?","*")
@@ -1107,7 +1146,7 @@ function Validate-WinPath {
     $pathIn = ($pathIn.Trim()).Trim(".")
 
     #Check it starts with a proper drive letter prompt
-    if ($pathIn -notmatch '^[a-z,A-Z]{1}:\\') {
+    if (($pathIn -notmatch '^[a-z,A-Z]{1}:\\') -and -not($Relative)) {
         $false
         return
     }
