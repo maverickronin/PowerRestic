@@ -2371,7 +2371,7 @@ while ($true) {
         [string[]]$m = @()
         $m += "$($RestoreFromQueue.count) items in restore queue"
         $m += ""
-        $RestoreFromQueue | ForEach-Object {$m += $_.path}
+        $RestoreFromQueue | ForEach-Object {$m += Convert-NixPathToWin($_.path)}
         $m += ""
         Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 1 -IndentFooter $false -QueueMenu $true -MenuLines $m
         if ($MenuChoice -is [int]) {
