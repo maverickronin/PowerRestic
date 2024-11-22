@@ -128,6 +128,7 @@ function Make-Ini {
     "DisplayLines=50" | Out-File .\PowerRestic.ini -Append
     "Retries=3" | Out-File .\PowerRestic.ini -Append
     "AutoOpenDryRunLog=1" | Out-File .\PowerRestic.ini -Append
+    "QuickRestoreConfirm=1" | Out-File .\PowerRestic.ini -Append
 
     Start-Sleep -s 3
 }
@@ -177,6 +178,12 @@ function Check-Settings {
         } else {
             $script:Options.LogPath = "Logs\"
         }
+    }
+
+    if ("QuickRestoreConfirm" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "QuickRestoreConfirm" 1  | out-null
+    } else {
+        if ($script:Options.QuickRestoreConfirm -ne 0) {$script:Options.QuickRestoreConfirm = 1}
     }
 }
 
@@ -1695,6 +1702,7 @@ function Get-RestoreDryRunWarningString {
 #1740 - ConfirmCheckRepositoryMetadataOnlyMenu
 #1750 - ConfirmCheckRepositoryFileDataMenu
 #1800 - BrowseAndRestoreMenu
+#1805 - ConfirmQuickRestore
 #1810 - RestoreSingleItemDestinationMenu
 #1820 - RestoreSingleItemOptionsMenu
 #1830 - ConfirmRestoreSingleItemMenu
@@ -2073,10 +2081,8 @@ while ($true) {
                         #Quick restore to original location
                         3 {
                             $RestoreFromSingle = $FolderData[1]
-                            $RestoreTo = ""
                             $KeepPage = $true
-                            Restore-Item
-                            pause
+                            $MenuAddress = 1805 #ConfirmQuickRestore
                             break BrowseAndRestoreMenu
                         }
                     }
@@ -2116,10 +2122,8 @@ while ($true) {
                             #Quick restore to original location
                             3 {
                                 $RestoreFromSingle = $BrowseChoice
-                                $RestoreTo = ""
                                 $KeepPage = $true
-                                Restore-Item
-                                pause
+                                $MenuAddress = 1805 #ConfirmQuickRestore
                                 break BrowseAndRestoreMenu
                             }
                         }
@@ -2128,6 +2132,35 @@ while ($true) {
             }
         }
         break BrowseAndRestoreMenu
+    }
+
+    :ConfirmQuickRestore while ($MenuAddress -eq 1805) {
+        #Resets options for quick restore and gives one last chance change your mind if option is set
+
+        $RestoreTo = ""
+        $RestoreOverwriteOption = "Different"
+        $RestoreDeleteOption = $false
+        $RestoreDryRunOption = $false
+
+        # if ($Options.QuickRestoreConfirm -eq 1) {
+        #     Restore-Item
+        #     pause
+        if ($Options.QuickRestoreConfirm -eq 1) {
+            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+                "Restore $($RestoreFromSingle.name) to original location?"
+                "$(Get-RestoreOptionsWarningString)"
+                "$(Get-RestoreDryRunWarningString)"
+                ""
+                "Yes"
+                "No"
+            )
+        }
+        if ($MenuChoice -eq 1 -or $Options.QuickRestoreConfirm -eq 0) {
+            Restore-Item
+            pause
+        }
+        $MenuAddress = 1800
+        break ConfirmQuickRestore
     }
 
     :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810) {
