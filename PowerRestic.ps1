@@ -219,34 +219,26 @@ function Show-Menu{
     #Several parameters specify types of menu for navigation purposes
 
     param (
-        [Parameter(Mandatory = $true)]
-        [int]$HeaderLines,
-        [Parameter(Mandatory = $true)]
-        [bool]$IndentHeader,
-        [Parameter(Mandatory = $true)]
-        [int]$FooterLines,
-        [Parameter(Mandatory = $true)]
-        [bool]$IndentFooter,
-        [bool]$ScrollMenu = $false,
-        [Parameter()]
-        [bool]$FolderMenu = $false,
-        [Parameter()]
-        [bool]$RestoreMenu = $false,
-        [Parameter()]
-        [bool]$QueueMenu = $false,
-        [Parameter()]
-        [bool]$NoEnter = $false,
+        [int]$HeaderLines = 0,
+        [switch]$IndentHeader,
+        [int]$FooterLines = 0,
+        [switch]$IndentFooter,
+        [switch]$ScrollMenu,
+        [switch]$FolderMenu,
+        [switch]$RestoreMenu,
+        [switch]$QueueMenu ,
+        [switch]$AllowEnter,
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string[]]$MenuLines,
         [Parameter()]
-        [bool]$cls = $true
+        [switch]$noCls
     )
 
     #Reset choice
     try {remove-variable -name MenuChoice -Scope script -ErrorAction Stop} catch {}
 
-    if ($cls -eq $true) {cls}
+    if (-not($noCls)) {cls}
 
     #Subtract header and footer lines to get number of menu options
     $NumberOfOptions = $MenuLines.Count - ($HeaderLines + $FooterLines)
@@ -258,7 +250,18 @@ function Show-Menu{
         } else {
             $script:MenuPage = 1
         }
-        Split-Menu -HeaderLines $HeaderLines -IndentHeader $IndentHeader -FooterLines $FooterLines -IndentFooter $IndentFooter -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -NoEnter $NoEnter -MenuLines $MenuLines
+        $splitMenuParams = @{
+            HeaderLines = $HeaderLines
+            IndentHeader = $($IndentHeader).IsPresent
+            FooterLines = $FooterLines
+            IndentFooter = $($IndentFooter).IsPresent
+            FolderMenu = $($FolderMenu).IsPresent
+            RestoreMenu = $($RestoreMenu).IsPresent
+            QueueMenu = $($QueueMenu).IsPresent
+            AllowEnter = $($AllowEnter).IsPresent
+            MenuLines = $MenuLines
+        }
+        Split-Menu @splitMenuParams
         return
     }
     #Count number of digits in total number of options to
@@ -276,7 +279,7 @@ function Show-Menu{
             if ($line -match '^-{20,}|^!{20,}|^@{20,}|^#{20,}|^\${20,}|^%{20,}|^\^{20,}|^&{20,}|^\*{20,}|^_{20,}|^={20,}|^\+{20,}') {
                 $output += "$($Line[0])"*($offset + 3) + $line + "`n"
             } else {
-                if ($IndentHeader -eq $True) {
+                if ($IndentHeader) {
                     $output += " "*($offset + 3) + $line + "`n"
                 } else {
                     $output += $line + "`n"
@@ -301,7 +304,7 @@ function Show-Menu{
             if ($line -match '^-{20,}|^!{20,}|^@{20,}|^#{20,}|^\${20,}|^%{20,}|^\^{20,}|^&{20,}|^\*{20,}|^_{20,}|^={20,}|^\+{20,}') {
                 $output += "$($Line[0])"*($offset + 3) + $line + "`n"
             } else {
-                if ($IndentFooter -eq $True) {
+                if ($IndentFooter) {
                     $output += " "*($offset + 3) + $line + "`n"
                 } else {
                     $output += $line + "`n"
@@ -313,31 +316,30 @@ function Show-Menu{
     write-host $output
 
     #Input is taken and validated in a separate function
-    Read-MenuChoice -NumberOfOptions $NumberOfOptions -ScrollMenu $ScrollMenu -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -NoEnter $NoEnter
+    $menuChoiceParams = @{
+        NumberOfOptions = $NumberOfOptions
+        ScrollMenu = $($ScrollMenu).IsPresent
+        FolderMenu = $($FolderMenu).IsPresent
+        RestoreMenu = $($RestoreMenu).IsPresent
+        QueueMenu = $($QueueMenu).IsPresent
+        AllowEnter = $($AllowEnter).IsPresent
+    }
+    Read-MenuChoice @menuChoiceParams
 }
 
 function Split-Menu {
-    #This takes the same parameters as show-menu
+    #This mostly takes the same parameters as show-menu
     #it chops them up into smaller sections and feeds them back to Show-Menu
 
     param (
-        [Parameter(Mandatory = $true)]
         [int]$HeaderLines,
-        [Parameter(Mandatory = $true)]
-        [bool]$IndentHeader,
-        [Parameter(Mandatory = $true)]
+        [switch]$IndentHeader,
         [int]$FooterLines,
-        [Parameter(Mandatory = $true)]
-        [bool]$IndentFooter,
-        [bool]$ScrollMenu = $true,
-        [Parameter()]
-        [bool]$FolderMenu = $false,
-        [Parameter()]
-        [bool]$RestoreMenu = $false,
-        [Parameter()]
-        [bool]$QueueMenu = $false,
-        [Parameter()]
-        [bool]$NoEnter = $false,
+        [switch]$IndentFooter,
+        [switch]$FolderMenu,
+        [switch]$RestoreMenu,
+        [switch]$QueueMenu,
+        [switch]$AllowEnter,
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string[]]$MenuLines
@@ -359,7 +361,19 @@ function Split-Menu {
     #Call Show-Menu once for each page
     while ($true) {
         $PageLines = ($MenuHeader + $MenuOptions[(($script:MenuPage - 1) * $Options.DisplayLines)..((($script:MenuPage - 1) * $Options.DisplayLines) + ($Options.DisplayLines - 1))] + $MenuFooter + "Page $script:MenuPage/$NumberOfPages")
-        Show-Menu -HeaderLines $HeaderLines -IndentHeader $IndentHeader -FooterLines $FooterLines -IndentFooter $IndentFooter -ScrollMenu $ScrollMenu -FolderMenu $FolderMenu -RestoreMenu $RestoreMenu -QueueMenu $QueueMenu -NoEnter $NoEnter -MenuLines ([string[]]$PageLines)
+        $showMenuParams = @{
+            HeaderLines = $HeaderLines
+            IndentHeader = $($IndentHeader).IsPresent
+            FooterLines = $FooterLines
+            IndentFooter = $($IndentFooter).IsPresent
+            ScrollMenu = $true
+            FolderMenu = $($FolderMenu).IsPresent
+            RestoreMenu = $($RestoreMenu).IsPresent
+            QueueMenu = $($QueueMenu).IsPresent
+            AllowEnter = $($AllowEnter).IsPresent
+            MenuLines = ([string[]]$PageLines)
+        }
+        Show-Menu @showMenuParams
         #Intercept inputs used for scrolling or selecting options for adjustment
         ###Adjust page number
         if ($script:MenuChoice -eq "") {$script:MenuPage++}
@@ -386,16 +400,11 @@ function Read-MenuChoice {
     param (
         [Parameter(Mandatory = $true)]
         [int]$NumberOfOptions,
-        [Parameter()]
-        [bool]$ScrollMenu = $false,
-        [Parameter()]
-        [bool]$FolderMenu = $false,
-        [Parameter()]
-        [bool]$RestoreMenu = $false,
-        [Parameter()]
-        [bool]$QueueMenu = $false,
-        [Parameter()]
-        [bool]$NoEnter = $false
+        [switch]$ScrollMenu,
+        [switch]$FolderMenu,
+        [switch]$RestoreMenu,
+        [switch]$QueueMenu,
+        [switch]$AllowEnter
     )
 
     #Reset choice if left over
@@ -407,38 +416,38 @@ function Read-MenuChoice {
     #Add options for different combinations
 
     #Single page flat menu
-    if ($ScrollMenu -eq $false -and $FolderMenu -eq $false) {
+    if ($($ScrollMenu).IsPresent -eq $false -and $($FolderMenu).IsPresent -eq $false) {
         #not sure if something will go here
     }
     #Multiple pages and flat menu
-    if ($ScrollMenu -eq $true -and $FolderMenu -eq $false -and $QueueMenu -eq $False) {
+    if ($($ScrollMenu).IsPresent -eq $true -and $($FolderMenu).IsPresent -eq $false -and $($QueueMenu).IsPresent -eq $False) {
         write-host "Enter for next screen, `"+`" for last screen, `"/`" to exit this menu"
         $AcceptableChoices += "+","/"
     }
     #Single page menu with levels, restorable or not restorable
-    if ($ScrollMenu -eq $false -and $FolderMenu -eq $true -and $RestoreMenu -eq $true) {
+    if ($($ScrollMenu).IsPresent -eq $false -and $($FolderMenu).IsPresent -eq $true -and $($RestoreMenu).IsPresent -eq $true) {
         write-host "`"-`" to go up a directory, `".`" for information about current directory,`"*`" to restore queued items, `"/`" to exit this menu"
         $AcceptableChoices += "-",".","/","*"
     }
-    if ($ScrollMenu -eq $false -and $FolderMenu -eq $true -and $RestoreMenu -eq $false) {
+    if ($($ScrollMenu).IsPresent -eq $false -and $($FolderMenu).IsPresent -eq $true -and $($RestoreMenu).IsPresent -eq $false) {
         write-host "`"-`" to go up a directory, `".`" for information about current directory, `"/`" to exit this menu"
         $AcceptableChoices += "-",".","/"
     }
     #Multiple page menu with levels, restorable or not restorable
-    if ($ScrollMenu -eq $true -and $FolderMenu -eq $true -and $RestoreMenu -eq $true) {
+    if ($($ScrollMenu).IsPresent -eq $true -and $($FolderMenu).IsPresent -eq $true -and $($RestoreMenu).IsPresent -eq $true) {
         write-host  "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`" for information about current directory, `"*`" to restore queued items, `"/`" to exit this menu"
         $AcceptableChoices += "+","-",".","/","*"
     }
-    if ($ScrollMenu -eq $true -and $FolderMenu -eq $true -and $RestoreMenu -eq $false) {
+    if ($($ScrollMenu).IsPresent -eq $true -and $($FolderMenu).IsPresent -eq $true -and $($RestoreMenu).IsPresent -eq $false) {
         write-host  "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`" for information about current directory, or `"/`" to exit this menu"
         $AcceptableChoices += "+","-",".","/"
     }
     #Restore queue menu, which has different options - scrolling and non-scrolling
-    if ($ScrollMenu -eq $true -and $QueueMenu -eq $true) {
+    if ($($ScrollMenu).IsPresent -eq $true -and $($QueueMenu).IsPresent -eq $true) {
         write-host  "Enter for next screen, `"+`" for last screen, `"-`" to clear the queue, or `"/`" to exit this menu"
         $AcceptableChoices += "+","-","/"
     }
-    if ($ScrollMenu -eq $false -and $QueueMenu -eq $true) {
+    if ($($ScrollMenu).IsPresent -eq $false -and $($QueueMenu).IsPresent -eq $true) {
         write-host  "Enter `"-`" to clear the queue or `"/`" to exit this menu"
         $AcceptableChoices += "-","/"
     }
@@ -448,7 +457,7 @@ function Read-MenuChoice {
     #Make sure that numbers count as ints to prevent problems in other places
     try {$Script:MenuChoice = [int]::Parse($Script:MenuChoice)} catch {}
     #Double condition because -in/-notin counts "" as in any array
-    while ($Script:MenuChoice -notin $AcceptableChoices -or ($NoEnter -eq $true -and $Script:MenuChoice -eq "")) {
+    while ($Script:MenuChoice -notin $AcceptableChoices -or ($($AllowEnter).IsPresent -eq $false -and $Script:MenuChoice -eq "")) {
         write-host ""
         write-host "Please enter a valid choice."
         write-host ""
@@ -835,7 +844,7 @@ function Show-FileDetails {
     #Displays the data in $script:FileInfo
 
     cls
-    Show-Menu -HeaderLines 6 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines @(
+    Show-Menu -HeaderLines 6 -FooterLines 2 -AllowEnter -MenuLines @(
         $script:FileDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore" + "" + "Enter to return"
     )
 }
@@ -895,14 +904,14 @@ function Show-FolderDetails {
     #Displays the data in $script:FolderDetailsFormatted
 
     cls
-    Show-Menu -HeaderLines 6 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines @(
+    Show-Menu -HeaderLines 6 -FooterLines 2 -AllowEnter -MenuLines @(
         [string[]]("$(Convert-NixPathToWin $script:FolderPath)","") + $script:FolderDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore" + "" + "Enter to return"
     )
 }
 
 function Confirm-ExitRestore {
     if ($script:RestoreFromQueue.Count -gt 0) {
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -MenuLines @(
             "There are still items queued to for restore!"
             ""
             "Exit anyway"
@@ -1055,7 +1064,7 @@ function Restore-ErrorMenu {
         default {$errorMessage += "an unknown error."}
     }
     while ($true) {
-        Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 4 -MenuLines @(
             "$errorMessage"
             ""
             "Would you like to attempt to continue or exit?"
@@ -1105,9 +1114,9 @@ function Restore-SingleItemDryRunMenu {
     #Includes option to automatically open file in system default text editor
 
     Restore-Item
-    if ($script:Options.AutoOpenDryRunLog -eq 1) {Open-LastRestoreLog}
+    if ($script:Options.AutoOpenDryRunLog -eq 1) {Open-RestoreLog}
     write-host ""
-    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -cls $false -MenuLines @(
+    Show-Menu -HeaderLines 2 -noCls -MenuLines @(
         "Are the results of the dry run acceptable?"
         ""
         "No"
@@ -1127,7 +1136,7 @@ function Confirm-DryRunQueueGroup {
         }
     }
     write-host ""
-    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -cls $false -MenuLines @(
+    Show-Menu -HeaderLines 2 -noCls -MenuLines @(
         "Are the results of the dry run acceptable?"
         ""
         "No"
@@ -1594,7 +1603,7 @@ function Unpin-Repository {
 function Ask-RestoreOptions {
     #Menu to choose and set overwrite and delete options for restore commands
 
-    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+    Show-Menu -HeaderLines 2 -MenuLines @(
         "Select restore options"
         ""
         "OVERWRITE existing files in destination if the snapshot's version is DIFFERENT, leave files in destination that are not in snapshot (Default)"
@@ -1635,7 +1644,7 @@ function Ask-RestoreOptions {
 function Ask-DryRun {
     #Menu to ask and set if restore operations should be proceeded by a dry run
 
-    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+    Show-Menu -HeaderLines 2 -MenuLines @(
             "Perform a dry first?"
             ""
             "Yes"
@@ -1654,7 +1663,7 @@ function Ask-DryRun {
 function Ask-DryRunQueueMode {
     #Menu to ask and set how dry runs should be performed when restoring from queue
 
-    Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+    Show-Menu -HeaderLines 2 -MenuLines @(
         "How should dry runs and restore operations be performed?"
         ""
         "One item at a time:  Perform the dry run for one item and then approve or deny the restore operation before moving on to the next."
@@ -1743,7 +1752,7 @@ while ($true) {
 
     :MainMenu while ($MenuAddress -eq 0) {
         Clear-Variables
-        Show-Menu -HeaderLines 2 -IndentHeader $false  -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -MenuLines @(
             "Welcome to PowerRestic!",
             "",
             "Work with repositories",
@@ -1765,7 +1774,7 @@ while ($true) {
 
     :TopRepositoryMenu while ($MenuAddress -eq 1000) {
         Clear-Variables
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -MenuLines @(
             "Manage Repositories"
             ""
             "Choose a pinned repository"
@@ -1808,9 +1817,9 @@ while ($true) {
             ""
             "Select a Repo or enter to go back"
         )
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
+        Show-Menu -HeaderLines 2 -FooterLines 2 -AllowEnter -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
         if ($MenuChoice -in "/","") {
-            #Go back if you just hit enter of slash
+            #Go back
             $MenuAddress = 1000
             break ChoosePinnedRepositoryMenu
         }
@@ -1821,7 +1830,7 @@ while ($true) {
         #Ask to remove pins if they have failed to open
         } else {
             $p = $Pinned[($MenuChoice - 1)]
-            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+            Show-Menu -HeaderLines 2 -MenuLines @(
             "Failed to open $p!  Would you like to unpin it?"
             ""
             "No"
@@ -1838,7 +1847,7 @@ while ($true) {
             Write-host "Please enter the path to the repository:"
             $p = Read-Host
 
-            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+            Show-Menu -HeaderLines 2 -MenuLines @(
                 "Would you like to test the repository at $p before pinning it?"
                 ""
                 "Yes"
@@ -1876,16 +1885,16 @@ while ($true) {
             "Select a Repo to unpin or enter to go back"
         )
         #Select Repository
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
+        Show-Menu -HeaderLines 2 -FooterLines 2 -AllowEnter -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
         if ($MenuChoice -in "/","") {
-            #Go back if you just hit enter of slash
+            #Go back
             $MenuAddress = 1000
             break ChoosePinnedRepositoryMenu
         }
         #Confirm removal
         if ($MenuChoice -is [int]) {
             $r = $Pinned[($MenuChoice - 1)]
-            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+            Show-Menu -HeaderLines 2 -MenuLines @(
                 "Unpin the repository at $($r)?"
                 ""
                 "Yes"
@@ -1937,7 +1946,7 @@ while ($true) {
         }
 
         #Now we get to the menu
-        Show-Menu -HeaderLines 3 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 3 -MenuLines @(
             "$($RepoInfo.repo_path)"
             "Repository ID $($RepoInfo.id)"
             ""
@@ -1972,7 +1981,8 @@ while ($true) {
     }
 
     :SnapshotSelectionMenu while ($MenuAddress -eq 1710) {
-        #Only regen snapshots if they've been reset ata higher menu level
+        $RestoreFromQueue.Clear()
+        #Only regen snapshots if they've been reset at a higher menu level
         if ($Snapshots.count -eq 0) {Gen-Snapshots}
         #Check again and make sure the repo even has snapshots
         if ($Snapshots.count -eq 0) {
@@ -1982,7 +1992,7 @@ while ($true) {
             $MenuAddress = 1000 #TopRepositoryMenu
             break
         }
-        Show-Menu -HeaderLines 2 -IndentHeader $true -FooterLines 4 -IndentFooter $true -MenuLines @(
+        Show-Menu -HeaderLines 2 -IndentHeader -FooterLines 4 -IndentFooter -AllowEnter -MenuLines @(
                 $Snapshots + "" + "Enter a snapshot's number or enter to return"
             )
             if ($MenuChoice -in "/","") {
@@ -1992,7 +2002,7 @@ while ($true) {
             $SnapID = $SnapIDs[$MenuChoice - 1]
             Get-SnapshotStats
             Format-SnapshotStats
-            Show-Menu -HeaderLines 18 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines @(
+            Show-Menu -HeaderLines 18 -FooterLines 2 -AllowEnter -MenuLines @(
                 [string[]]("Snapshot Stats","") + $SnapshotStatsFormatted + "" + "Browse/restore from this snapshot" + "" + "Enter to return"
             )
                 switch ($MenuChoice) {
@@ -2002,7 +2012,7 @@ while ($true) {
     }
 
     :CheckRepositoryMenu while ($MenuAddress -eq 1720) {
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -MenuLines @(
             "Repo ID $($RepoInfo.id) at $($RepoInfo.repo_path) selected"
             ""
             "Check repository metadata integrity"
@@ -2020,7 +2030,7 @@ while ($true) {
     }
 
     :CheckRepositoryDataTypeMenu while ($MenuAddress -eq 1730) {
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -MenuLines @(
             "Select data to check in repository ID $($RepoInfo.id) at path $RepoPath"
             ""
             "Check all data"
@@ -2063,7 +2073,7 @@ while ($true) {
     }
 
     :ConfirmCheckRepositoryMetadataOnlyMenu while ($MenuAddress -eq 1740) {
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -MenuLines @(
             "Check metadata of repository ID $($RepoInfo.id) at path $RepoPath ?"
             ""
             "Yes"
@@ -2086,7 +2096,7 @@ while ($true) {
         } else {
             $a = "$($RepoCheckCommand.split("=")[1]) of"
         }
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -MenuLines @(
             "Do you want to check $a data in repository ID $($RepoInfo.id) at path $RepoPath"
             ""
             "Yes"
@@ -2117,7 +2127,7 @@ while ($true) {
                 Format-FolderDirsFiles
             :KeepFolderData while($true) {
                 #Display the menu, remember long menus are nested within Split-Menu
-                Show-Menu -HeaderLines 3 -IndentHeader $false -FooterLines 2 -IndentFooter $false -FolderMenu $true -RestoreMenu $true -MenuLines $FolderLines
+                Show-Menu -HeaderLines 3 -FooterLines 2 -FolderMenu -RestoreMenu -AllowEnter -MenuLines $FolderLines
                 #################################
                 #Exit to snapshot selection menu
                 #################################
@@ -2237,7 +2247,7 @@ while ($true) {
         #     Restore-Item
         #     pause
         if ($Options.QuickRestoreConfirm -eq 1) {
-            Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines @(
+            Show-Menu -HeaderLines 4 -MenuLines @(
                 "Restore $($RestoreFromSingle.name) to original location?"
                 "$(Get-RestoreOptionsWarningString)"
                 "$(Get-RestoreDryRunWarningString)"
@@ -2257,7 +2267,7 @@ while ($true) {
     :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810) {
         #Pick destination for a single item chosen for restore
 
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines @(
+        Show-Menu -HeaderLines 2 -FooterLines 2 -AllowEnter -MenuLines @(
             "$(Convert-NixPathToWin($RestoreFromSingle.path)) selected"
             ""
             "Restore to original location"
@@ -2319,7 +2329,7 @@ while ($true) {
         $m += "Yes"
         $m += "No"
 
-        Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines $m
+        Show-Menu -HeaderLines 4 -MenuLines $m
 
         #Restore item and go back to BrowseAndRestoreMenu
         if ($MenuChoice -eq 1) {
@@ -2345,7 +2355,7 @@ while ($true) {
         if (Check-RestoreFromQueueEmpty) {
             Warn-RestoreFromQueueEmpty
             $MenuAddress = 1800 #BrowseAndRestoreMenu
-            break ViewRestoreQueue
+            break RestoreQueueDestinationMenu
         }
 
         #Build menu array
@@ -2366,7 +2376,7 @@ while ($true) {
         $m += ""
         $m += "Enter to return to last screen"
 
-        Show-Menu -HeaderLines $l -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines $m
+        Show-Menu -HeaderLines $l -FooterLines 2 -AllowEnter -MenuLines $m
 
         switch ($MenuChoice) {
             1 {
@@ -2427,7 +2437,7 @@ while ($true) {
         $m += "Yes"
         $m += "No"
 
-        Show-Menu -HeaderLines 4 -IndentHeader $false -FooterLines 0 -IndentFooter $false -MenuLines $m
+        Show-Menu -HeaderLines 4 -MenuLines $m
 
         #Restore items and go back to BrowseAndRestoreMenu
 
@@ -2464,7 +2474,7 @@ while ($true) {
         $m += ""
         $script:RestoreFromQueue | ForEach-Object {$m += Convert-NixPathToWin($_.path)}
         $m += ""
-        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 1 -IndentFooter $false -QueueMenu $true -MenuLines $m
+        Show-Menu -HeaderLines 2 -FooterLines 1 -QueueMenu -MenuLines $m
         if ($MenuChoice -is [int]) {
             $RestoreFromQueue.Remove($RestoreFromQueue[$MenuChoice - 1])
         } elseif ($MenuChoice -in @("/","")) {
