@@ -1839,10 +1839,45 @@ while ($true) {
     }
 
     :UnpinRepositoryMenu while ($MenuAddress -eq 1300) {
-        write-host ""
-        write-host "Not implemented yet.  Press enter to continue"
-        read-host
-        $MenuAddress = 1000
+        #Go back up a level if there's nothing to show
+        if ($Pinned.count -lt 1) {
+            Write-host "No pinned repos found"
+            write-host ""
+            pause
+            write-host ""
+            $MenuAddress = 1000 #TopRepositoryMenu
+            break UnpinRepositoryMenu
+        }
+        #Build string array listing repository options
+        [string[]] $PinnedRepoHeader = @(
+            "$($Pinned.Count) pinned repositories found"
+            ""
+        )
+        [string[]] $PinnedRepoFooter = @(
+            ""
+            "Select a Repo to unpin or enter to go back"
+        )
+        #Select Repository
+        Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 2 -IndentFooter $false -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
+        if ($MenuChoice -in "/","") {
+            #Go back if you just hit enter of slash
+            $MenuAddress = 1000
+            break ChoosePinnedRepositoryMenu
+        }
+        #Confirm removal
+        if ($MenuChoice -is [int]) {
+            $r = $Pinned[($MenuChoice - 1)]
+            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+                "Unpin the repository at $($r)?"
+                ""
+                "Yes"
+                "No"
+            )
+            if ($MenuChoice -eq 1) {Unpin-Repository $r}
+        }
+        #Go back up either way
+        $MenuAddress = 1000 #TopRepositoryMenu
+        break UnpinRepositoryMenu
     }
 
     :EnterRepositoryManuallyMenu while ($MenuAddress -eq 1400) {
