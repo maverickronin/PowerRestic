@@ -960,11 +960,11 @@ function Restore-Item {
     }
     if ($file -eq $true -and $original -eq $true) {
         #restic.exe -r B:\Repo --insecure-no-password restore "abcdef:/C/Dir1/Dir2/" --include "file.exe" --target "C:\Dir1\Dir2\"
-        $c += " $(Quote-Path("$script:SnapID" + ":" + "$(Pop-NixDirectory($($script:RestoreFromSingle.path)))" + "/"))" + " --include $(Quote-Path($(Cleave-FileName($($script:RestoreFromSingle.path)))))" + " --target $(Quote-Path($(Convert-NixPathToWin($(Pop-NixDirectory($script:RestoreFromSingle.path))))))" + " -vv"
+        $c += " $(Quote-Path("$script:SnapID" + ":" + "$(Pop-NixDirectory($($script:RestoreFromSingle.path)))" + "/"))" + " --include /$(Quote-Path($(Cleave-FileName($($script:RestoreFromSingle.path)))))" + " --target $(Quote-Path($(Convert-NixPathToWin($(Pop-NixDirectory($script:RestoreFromSingle.path))))))\" + " -vv"
     }
     if ($file -eq $true -and $new -eq $true) {
         #restic.exe -r B:\Repo --insecure-no-password restore "abcdef:/C/Dir1/Dir2/" --include "file.exe" --target "C:\Dir3\Dir4\"
-        $c += " $(Quote-Path("$script:SnapID" + ":" + "$(Pop-NixDirectory($($script:RestoreFromSingle.path)))" + "/"))" + " --include $(Quote-Path($(Cleave-FileName($($script:RestoreFromSingle.path)))))" + " --target $(Quote-Path("$script:RestoreTo"))" + " -vv"
+        $c += " $(Quote-Path("$script:SnapID" + ":" + "$(Pop-NixDirectory($($script:RestoreFromSingle.path)))" + "/"))" + " --include /$(Quote-Path($(Cleave-FileName($($script:RestoreFromSingle.path)))))" + " --target $(Quote-Path("$script:RestoreTo"))\" + " -vv"
     }
 
     #Overwrite, delete, and dry run options
