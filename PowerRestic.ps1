@@ -1832,10 +1832,28 @@ while ($true) {
     }
 
     :PinRepositoryMenu while ($MenuAddress -eq 1200) {
-        write-host ""
-        write-host "Not implemented yet.  Press enter to continue"
-        read-host
-        $MenuAddress = 1000
+        $i = 0
+        :PinRepositoryMenuRetry while ($i -lt $Options.Retries -and $RepoUnlocked -eq $false) {
+            cls
+            Write-host "Please enter the path to the repository:"
+            $p = Read-Host
+
+            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+                "Would you like to test the repository at $p before pinning it?"
+                ""
+                "Yes"
+                "No"
+            )
+            if ($MenuChoice -eq 1){
+                Open-Repo $p
+                $i++
+            }
+            if ($MenuChoice -eq 2 -or $RepoUnlocked -eq $true) {
+                Pin-Repository $p
+                break PinRepositoryMenuRetry
+            }
+        }
+        $MenuAddress = 1000 #TopRepositoryMenu
     }
 
     :UnpinRepositoryMenu while ($MenuAddress -eq 1300) {
