@@ -1847,6 +1847,30 @@ while ($true) {
             Write-host "Please enter the path to the repository:"
             $p = Read-Host
 
+            #Confirm the path is syntactically valid
+            $q = Validate-WinPath $p
+            if ($q[0] -eq $true) {
+                $p = $q[1]
+            } else {
+                Write-host ""
+                Write-host "Please enter a valid path"
+                Write-host ""
+                pause
+                $i++
+                continue
+            }
+
+            #Check it doesn't already exist
+            foreach ($pin in $Pinned) {
+                if ($pin -like $p) {
+                    Write-host ""
+                    Write-host "Repository $p is already pinned!"
+                    Write-host ""
+                    pause
+                    $i++
+                    continue PinRepositoryMenuRetry
+                }
+            }
             Show-Menu -HeaderLines 2 -MenuLines @(
                 "Would you like to test the repository at $p before pinning it?"
                 ""
