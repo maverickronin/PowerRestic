@@ -501,7 +501,24 @@ function Open-Repo {
     $i = -1 #Offset for automatic first try with no password
     $script:RepoPasswordCommand = " --insecure-no-password"
     $env:RESTIC_PASSWORD = ""
-    while ($i -lt $script:Options.Retries -or $script:RepoUnlocked -eq $false) {
+    :TryRepoPasswords while ($i -lt $script:Options.Retries -and $script:RepoUnlocked -eq $false) {
+        #Skip asking for password on first count
+        if ($i -gt -1) {
+            Write-Host "Please enter the password for this repository:"
+            #Silly workaround encrypting/decrypting because it's the only way to hide input in PS5
+            $HiddenPassword = Read-Host -AsSecureString
+            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($HiddenPassword)
+            $RepoPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+            #Free unmanaged memory
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            if ($RepoPassword -eq "" -or $RepoPassword -eq $null) {
+                write-host "Repository password cannot be blank"
+                $i++
+                continue TryRepoPasswords
+            }
+            $env:RESTIC_PASSWORD = $RepoPassword
+        }
+
         $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($Path))" + "$script:RepoPasswordCommand" + " cat config"
         #redirection shenanigans to ensure a hard fail and hide restic's output
         try {
@@ -518,28 +535,12 @@ function Open-Repo {
         } else {
             #Hide failure notice for first try and get rid of the no password flag
             if ($i -gt -1) {
-                write-host "Failed to open repo"
+                write-host "Failed to open repository"
                 write-host ""
             } else {
                 $script:RepoPasswordCommand = ""
             }
         }
-
-        #Asking for PW down here at th end of the loop so the first try is always without one
-        Write-Host "Please enter the password for this repository:"
-        #Silly workaround encrypting/decrypting because it's the only way to hide input in PS5
-        $HiddenPassword = Read-Host -AsSecureString
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($HiddenPassword)
-        $RepoPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-        while ($RepoPassword -eq "" -or $RepoPassword -eq $null){
-            Write-Host "Repo password cannot be blank."
-            $HiddenPassword = Read-Host -AsSecureString
-            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($HiddenPassword)
-            $RepoPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-        }
-        #Free unmanaged memory
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-        $env:RESTIC_PASSWORD = $RepoPassword
         $i++
     }
 
@@ -1844,7 +1845,7 @@ while ($true) {
         $i = 0
         :PinRepositoryMenuRetry while ($i -lt $Options.Retries -and $RepoUnlocked -eq $false) {
             cls
-            Write-host "Please enter the path to the repository:"
+            Write-host "Please enter the path to the repository you would like to pin:"
             $p = Read-Host
 
             #Confirm the path is syntactically valid
@@ -1871,6 +1872,8 @@ while ($true) {
                     continue PinRepositoryMenuRetry
                 }
             }
+
+            #In case you're just setting this up in advance or something
             Show-Menu -HeaderLines 2 -MenuLines @(
                 "Would you like to test the repository at $p before pinning it?"
                 ""
