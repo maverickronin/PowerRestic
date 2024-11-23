@@ -2345,7 +2345,7 @@ while ($true) {
             Restore-Queue
         #Dry run all at once, do it again for real if approved
         } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Group") {
-            $QueueRestoreLogPaths = @()
+            $script:QueueRestoreLogPaths = @()
             Restore-Queue -GroupDryRun $true
             Confirm-DryRunQueueGroup
             if ($RestoreDryRunOption -eq $false) {
@@ -2371,7 +2371,7 @@ while ($true) {
         [string[]]$m = @()
         $m += "$($RestoreFromQueue.count) items in restore queue"
         $m += ""
-        $RestoreFromQueue | ForEach-Object {$m += Convert-NixPathToWin($_.path)}
+        $script:RestoreFromQueue | ForEach-Object {$m += Convert-NixPathToWin($_.path)}
         $m += ""
         Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 1 -IndentFooter $false -QueueMenu $true -MenuLines $m
         if ($MenuChoice -is [int]) {
