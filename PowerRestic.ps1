@@ -1120,10 +1120,10 @@ function Restore-SingleItemDryRunMenu {
     Show-Menu -HeaderLines 2 -noCls -MenuLines @(
         "Are the results of the dry run acceptable?"
         ""
-        "No"
         "Yes"
+        "No"
     )
-    if ($script:MenuChoice -eq 2) {$script:RestoreDryRunOption = $false}
+    if ($script:MenuChoice -eq 1) {$script:RestoreDryRunOption = $false}
     return
 }
 
@@ -1140,10 +1140,10 @@ function Confirm-DryRunQueueGroup {
     Show-Menu -HeaderLines 2 -noCls -MenuLines @(
         "Are the results of the dry run acceptable?"
         ""
-        "No"
         "Yes"
+        "No"
     )
-    if ($script:MenuChoice -eq 2) {$script:RestoreDryRunOption = $false}
+    if ($script:MenuChoice -eq 1) {$script:RestoreDryRunOption = $false}
     return
 }
 
@@ -1834,10 +1834,10 @@ while ($true) {
             Show-Menu -HeaderLines 2 -MenuLines @(
             "Failed to open $p!  Would you like to unpin it?"
             ""
-            "No"
             "Yes"
+            "No"
             )
-            if ($MenuChoice -eq 2) {Unpin-Repository $p}
+            if ($MenuChoice -eq 1) {Unpin-Repository $p}
         }
     }
 
