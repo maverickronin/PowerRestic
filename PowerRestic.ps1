@@ -1421,6 +1421,14 @@ function Create-Repo {
     if ($env:RESTIC_PASSWORD -eq $null) {$c += " --insecure-no-password"}
     cmd /c $C
     pause
+
+    Show-Menu -HeaderLines 2 -MenuLines @(
+        "Would you like to pin the new repository?"
+        ""
+        "Yes"
+        "No"
+    )
+    if ($script:MenuChoice -eq 1) {Pin-Repository $p}
 }
 
 function Validate-Decimal {
@@ -1816,7 +1824,7 @@ while ($true) {
         )
         [string[]] $PinnedRepoFooter = @(
             ""
-            "Select a Repo or enter to go back"
+            "Select a repository or enter to go back"
         )
         Show-Menu -HeaderLines 2 -FooterLines 2 -AllowEnter -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
         if ($MenuChoice -in "/","") {
