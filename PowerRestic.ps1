@@ -1533,6 +1533,7 @@ function Update-Ini {
         }
     }
 
+    #Overwrite entire files
     if ($OverwriteLines.Count -gt 0 -and $AppendLine -eq "") {
         if (Test-Path PowerRestic.ini) {
             try {
@@ -1543,6 +1544,9 @@ function Update-Ini {
         }
         $OverwriteLines | Out-File -FilePath PowerRestic.ini -Force
     }
+
+    #Reload ini after changes
+    Load-ini
 }
 
 function Pin-Repository {
@@ -1552,7 +1556,6 @@ function Pin-Repository {
     param ([string]$path)
 
     Update-Ini -AppendLine ("pin=" + "$path")
-    Load-ini
     if ($path -in $script:Pinned) {
         Write-host "Pinned repository: $path"
     } else {
@@ -1562,7 +1565,30 @@ function Pin-Repository {
 }
 
 function Unpin-Repository {
-    #TODO
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $foundRepo = $false
+    [string[]]$IniOut = @()
+
+    $IniIn = get-content "PowerRestic.ini"
+
+    foreach ($line in $IniIn) {
+        if ($line -match '(?<=((?i)pin\s*=\s*)).*') {
+            if ($Path -like ($matches[0].Trim())) {
+                $foundRepo = $true
+                continue
+            }
+        }
+        $IniOut += $line
+    }
+    if ($foundRepo -eq $true) {
+        Update-Ini -OverwriteLines $IniOut
+    } else {
+        Write-Host "$Path not found in existing ini file!"
+    }
 }
 
 function Ask-RestoreOptions {
@@ -1790,7 +1816,19 @@ while ($true) {
         }
         #Try and open the repo
         Open-Repo $Pinned[($MenuChoice - 1)]
-        if ($RepoUnlocked -eq $true) {$MenuAddress = 1700} #RepositoryOperationMenu
+        if ($RepoUnlocked -eq $true) {
+            $MenuAddress = 1700 #RepositoryOperationMenu
+        #Ask to remove pins if they have failed to open
+        } else {
+            $p = $Pinned[($MenuChoice - 1)]
+            Show-Menu -HeaderLines 2 -IndentHeader $false -FooterLines 0 -IndentFooter $false -NoEnter $true -MenuLines @(
+            "Failed to open $p!  Would you like to unpin it?"
+            ""
+            "No"
+            "Yes"
+            )
+            if ($MenuChoice -eq 2) {Unpin-Repository $p}
+        }
     }
 
     :PinRepositoryMenu while ($MenuAddress -eq 1200) {
