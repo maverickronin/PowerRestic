@@ -243,6 +243,14 @@ function Create-LogPath {
     }
 }
 
+function Clear-ResticCache {
+    #Clears old cache based on restic's default threshold of "old"
+    #Ignore errors since it's not vital
+
+    $c = "$(Quote-Path($ResticPath))" + " cache --cleanup"
+    try {cmd /c $c | out-null} catch {}
+}
+
 function Show-Menu{
     #Turns an array of strings into a numbered menu
     #Headers and footers which are not turned into numbered options can be specified
@@ -533,11 +541,13 @@ function Open-Repo {
 
     #Automatically try to open with no password
     $i = -1 #Offset for automatic first try with no password
+    $triedLocked = $false #Only attempt to unlock the repo once
     $script:RepoPasswordCommand = " --insecure-no-password"
     $env:RESTIC_PASSWORD = ""
     :TryRepoPasswords while ($i -lt $script:Options.Retries -and $script:RepoUnlocked -eq $false) {
         #Skip asking for password on first count
         if ($i -gt -1) {
+            $script:RepoPasswordCommand = ""
             Write-Host "Please enter the password for this repository:"
             #Silly workaround encrypting/decrypting because it's the only way to hide input in PS5
             $HiddenPassword = Read-Host -AsSecureString
@@ -554,10 +564,34 @@ function Open-Repo {
         }
 
         $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($Path))" + "$script:RepoPasswordCommand" + " cat config"
-        #redirection shenanigans to ensure a hard fail and hide restic's output
-        try {
-            $o = cmd /c $c *>&1 | ConvertFrom-Json
-        } catch {$o=$null}
+        #shenanigans to hide restic's output from console while still storing it in a variable
+        $ErrorActionPreference = 'Continue'
+        $o = cmd /c $c *>&1
+        $ErrorActionPreference = 'Stop'
+        #Check if repository is locked
+        foreach ($P in $o) {
+            if ($p -like "*unable to create lock*") {
+                #Abort if this has already happened once
+                if ($triedLocked -eq $true) {
+                    cls
+                    Write-Host "Repository could not be unlocked!  Repository cannot be opened!"
+                    pause
+                    break TryRepoPasswords
+                #Try to unlock and decrement retry counter it this is the first time
+                } else {
+                    Unlock-Repo -LockMessage $p.ToString() -LockedRepo $path
+                    $i = $i - 1
+                    $triedLocked = $true
+                }
+                break
+            }
+        }
+
+        try {$o = $o | ConvertFrom-Json} catch {$o=$null}
+        # #redirection shenanigans to ensure a hard fail and hide restic's output
+        # try {
+        #     $o = cmd /c $c *>&1 | ConvertFrom-Json
+        # } catch {$o=$null}
 
         #Basic check of the hex identifiers that cat config returns as check for valid data
         if ($o.version -is [int] -and $o.id -match'[0-9a-f]+' -and $o.chunker_polynomial -match '[0-9a-f]+') {
@@ -571,8 +605,6 @@ function Open-Repo {
             if ($i -gt -1) {
                 write-host "Failed to open repository"
                 write-host ""
-            } else {
-                $script:RepoPasswordCommand = ""
             }
         }
         $i++
@@ -581,6 +613,61 @@ function Open-Repo {
     #Reset these if this function has failed out after passing the retry limit
     $env:RESTIC_PASSWORD = ""
     $script:RepoPasswordCommand = ""
+}
+
+function Unlock-Repo {
+    #Displays lock message passed to it and asks if user wants to remove the lock
+    param (
+        [string]$LockMessage,
+        [string]$LockedRepo
+    )
+
+    #Build menu
+    [string[]]$m = @()
+    if ($LockMessage -match 'locked.*') {
+        $m +="The repository at $LockedRepo is $($matches[0]))"
+    } else {
+        $m += "Raw error message from repository at $LockedRepo is: $LockMessage"
+    }
+
+    if ($LockMessage -match '(?<=PID\ )\d*') {
+        try {
+            [int]::Parse($Matches[0]) | out-null
+            if ($Matches[0] -in (Get-Process).id) {
+                if ((get-process -ID $Matches[0]).ProcessName -like "restic*") {
+                $m += "THIS PROCESS IS STILL RUNNING AND MAY BE ACTIVE"
+                }
+            } else {
+                $m += "This process no longer appears to be active"
+            }
+        } catch {
+            $m += "No information about the locking process was determined"
+        }
+    }
+
+    $m += "Would you like to forcibly remove the lock?"
+    $m += ""
+    $m += "Yes"
+    $m += "No"
+    $m += ""
+    $m += "WARNING: Removing the lock while another instance of restic is still active may result in DATA LOSS"
+
+    Show-Menu -HeaderLines 4 -FooterLines 2 -MenuLines $m
+
+    if ($MenuChoice -eq 1) {
+        Show-Menu -HeaderLines 2 -MenuLines @(
+            "Are you sure you wish to FORCIBLY remove this lock?"
+            ""
+            "Yes"
+            "No"
+        )
+        if ($MenuChoice -eq 1) {
+            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($Path))" + "$script:RepoPasswordCommand" + " unlock"
+            cmd /c $c
+            Pause
+            return
+        }
+    }
 }
 
 function Quote-Path {
@@ -1839,7 +1926,10 @@ function Get-RestoreDryRunWarningString {
 #1860 - ConfirmRestoreQueueMenu
 #1870 - ViewRestoreQueue
 
+Write-Host "Starting up..."
 Load-ini
+Write-Host "Clearing old cache..."
+Clear-ResticCache
 
 while ($true) {
 
