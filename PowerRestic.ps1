@@ -185,6 +185,40 @@ function Check-Settings {
     } else {
         if ($script:Options.QuickRestoreConfirm -ne 0) {$script:Options.QuickRestoreConfirm = 1}
     }
+
+    if ("PruneMaxRepackSize" -in $script:Options.PSObject.Properties.Name) {
+        if (-not(Validate-DataSize $script:Options.PruneMaxRepackSize -bytes $false)) {
+            $script:Options.PSObject.Properties.Remove("PruneMaxRepackSize")
+        }
+    }
+
+    if ("PruneMaxUnused" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "PruneMaxUnused" "5%"  | out-null
+    } else {
+        if ((Validate-Percentage -Number ($script:Options.PruneMaxUnused).Trim("%") -Hundred)) {
+            $script:Options.PruneMaxUnused = $(($script:Options.PruneMaxUnused).Trim("%")) + "%"
+        } else {
+            $script:Options.PruneMaxUnused = "5%"
+        }
+    }
+
+    if ("PruneRepackCacheableOnly" -in $script:Options.PSObject.Properties.Name) {
+        if ($script:Options.PruneRepackCacheableOnly -ne 1) {
+            $script:Options.PSObject.Properties.Remove("PruneRepackCacheableOnly")
+        }
+    }
+
+    if ("PruneRepackSmall" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "PruneRepackSmall" 1  | out-null
+    } else {
+        if ($script:Options.PruneRepackSmall -ne 0) {$script:Options.PruneRepackSmall = 1}
+    }
+
+    if ("PruneRepackUncompressed" -notin $script:Options.PSObject.Properties.Name) {
+        $script:Options | Add-Member -NotePropertyName "PruneRepackUncompressed" 1  | out-null
+    } else {
+        if ($script:Options.PruneRepackUncompressed -ne 0) {$script:Options.PruneRepackUncompressed = 1}
+    }
 }
 
 function Create-LogPath {
@@ -656,6 +690,54 @@ function Format-SnapshotStats {
     #Convoluted way to get the list formatting
     #Split multiline string and filter out the empty lines it includes
     $script:SnapshotStatsFormatted = ($SnapshotTable|fl|Out-String).Split("`r`n") | where {$_ -ne ""}
+}
+
+function Forget-Snapshot {
+    #Gets user conformation and forgets the currently selected snapshot
+
+    #Build menu array
+    [string[]]$m = @()
+    $m += "Are you sure you want to FORGET this snapshot in the repository at $($script:RepoPath)?"
+    $m += ""
+    $m += $SnapshotStatsFormatted
+    $m += ""
+    $m += "This operation CANNOT BE UNDONE"
+    $m += ""
+    $m += "Yes"
+    $m += "No"
+    $m += ""
+    $m += "This operation CANNOT BE UNDONE"
+    Show-Menu -HeaderLines 20 -FooterLines 2 -MenuLines $m
+
+    if ($script:MenuChoice -eq 1) {
+        $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " forget" + " $SnapID -vv"
+        cmd /c $c
+        pause
+        Gen-Snapshots
+    }
+}
+
+function Get-PruneCommand {
+    #Creates command line options string based on options set in script
+
+    $s = ""
+    if ($script:Options.PruneMaxRepackSize -ne $null) {$s += " --max-repack-size $($script:Options.PruneMaxRepackSize)"}
+    if ($script:Options.PruneMaxUnused -ne $null) {$s += " --max-unused $($script:Options.PruneMaxUnused)"}
+    if ($script:Options.PruneRepackCacheableOnly -ne $null) {$s += " --repack-cacheable-only"}
+    if ($script:Options.PruneRepackSmall -ne $null) {$s += " --repack-small"}
+    if ($script:Options.PruneRepackSmall -ne $null) {$s += " --repack-uncompressed"}
+
+    $s
+    return
+}
+
+Function Prune-Repo {
+    param([switch]$DryRun)
+
+    $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " prune" + " $SnapID -vv" + "$(Get-PruneCommand)"
+    if ($($DryRun).IsPresent) {$c += " --dry-run"}
+    cmd /c $c
+    pause
 }
 
 function Gen-FolderData {
@@ -1745,6 +1827,8 @@ function Get-RestoreDryRunWarningString {
 #1730 - CheckRepositoryDataTypeMenu
 #1740 - ConfirmCheckRepositoryMetadataOnlyMenu
 #1750 - ConfirmCheckRepositoryFileDataMenu
+#1760 - EditSnapshotTagsMenu
+#1770 - PruneRepositoryData
 #1800 - BrowseAndRestoreMenu
 #1805 - ConfirmQuickRestore
 #1810 - RestoreSingleItemDestinationMenu
@@ -1989,6 +2073,7 @@ while ($true) {
             "Check repository integrity"
             "Work with snapshots"
             "$PinOrUnpin"
+            "Prune old data"
             "Return to main menu"
             "Exit"
         )
@@ -2009,8 +2094,9 @@ while ($true) {
                     Pin-Repository $RepoPath
                 }
             }
-            5 {$MenuAddress = 0}    #MainMenu
-            6 {exit}
+            5 {$MenuAddress = 1770} #PruneRepositoryData
+            6 {$MenuAddress = 0} #MainMenu
+            7 {exit}
         }
         break
     }
@@ -2038,10 +2124,12 @@ while ($true) {
             Get-SnapshotStats
             Format-SnapshotStats
             Show-Menu -HeaderLines 18 -FooterLines 2 -AllowEnter -MenuLines @(
-                [string[]]("Snapshot Stats","") + $SnapshotStatsFormatted + "" + "Browse/restore from this snapshot" + "" + "Enter to return"
+                [string[]]("Snapshot Stats","") + $SnapshotStatsFormatted + "" + "Browse/restore from this snapshot" + "Forget this snapshot" + "Edit this snapshot's tags" + "" + "Enter to return"
             )
                 switch ($MenuChoice) {
                     1 {$MenuAddress = 1800} #BrowseAndRestoreMenu
+                    2 {Forget-Snapshot $SnapID}
+                    3 {$MenuAddress = 1760} #EditSnapshotTagsMenu
                 }
             break
     }
@@ -2145,6 +2233,37 @@ while ($true) {
         }
         $MenuAddress = 1700 #RepositoryOperationMenu
         break ConfirmCheckRepositoryFileDataMenu
+    }
+
+    :EditSnapshotTagsMenu while ($MenuAddress -eq 1760) {
+        cls
+        Write-Host "This feature is not yet implemented"
+        Pause
+        $MenuAddress = 1710
+    }
+
+    :PruneRepositoryData while ($MenuAddress -eq 1770) {
+        Show-Menu -HeaderLines 2 -MenuLines @(
+            "Prune unused data in repository at $($RepoPath)?"
+            ""
+            "Yes"
+            "No"
+        )
+        if ($MenuChoice -eq 1) {
+            Show-Menu -HeaderLines 2 -MenuLines @(
+                "Perform prune as a dry run?"
+                ""
+                "Yes"
+                "No"
+            )
+            if ($MenuChoice -eq 1) {
+                Prune-Repo -DryRun
+            } else {
+                Prune-Repo
+            }
+        }
+        $MenuAddress = 1700
+        break PruneRepositoryData
     }
 
     :BrowseAndRestoreMenu while ($MenuAddress -eq 1800) {
