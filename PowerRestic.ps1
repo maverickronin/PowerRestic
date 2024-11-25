@@ -4,6 +4,7 @@
 #Resets everything else if you're using this in ISE/VS Code or something
 
 $ErrorActionPreference = 'Stop'
+$FormatEnumerationLimit = -1
 $ResticPath = $null
 $MenuAddress = 0
 
@@ -802,6 +803,115 @@ function Forget-Snapshot {
         pause
         Gen-Snapshots
     }
+}
+
+function Find-ChangedSnapshot {
+    #Find new snapshot ID after changing tags, updating $script:SnapID
+
+    cls
+    write-host "Finding updated snapshot..."
+    $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($script:RepoPath))" + "$script:RepoPasswordCommand" + " snapshots --json"
+    $newSnapshots = cmd /c $c | ConvertFrom-Json
+
+    foreach ($snapshot in $newSnapshots) {
+        if ($snapshot.time -eq $script:SnapshotStatsRaw.time) {
+            $script:SnapID = $snapshot.short_id
+            return
+        }
+    }
+}
+
+function Add-SnapshotTag {
+    #Read user input and adds it as tag to the currently selected snapshot
+    #Performs some basic validation to get rid of things that are probably bad ideas
+
+$pattern = @"
+[\\/'`""`\{\}\[\],;:^\*%|]
+"@
+
+    $confirmed = $false
+    $validated = $false
+    while ($confirmed -eq $false -and $validated -eq $false) {
+        cls
+        Write-Host "Enter the tag you would like to add:"
+        $tag = Read-Host
+        $tag.Trim() | Out-Null
+        if ($tag -match $pattern) {
+            Write-Host ""
+            Write-Host "Please enter a tag without any of the following characters:"
+            Write-Host "\  /  ``  `'  `"  {  }  [  ]  ,  ;  :  ^  *  %  |"
+            Pause
+            continue
+        } else {
+            $validated = $true
+        }
+        Show-Menu -HeaderLines 2 -MenuLines @(
+            "Add tag `"$tag`" to this snapshot?"
+            ""
+            "Yes"
+            "No"
+        )
+        if ($script:MenuChoice -eq 2) {return}
+    }
+
+    cls
+    $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --add $(Quote-Path($tag))" + " $($script:SnapID)"
+    cmd /c $c
+}
+
+function Remove-SnapshotTag {
+    #Displays a menu with all tags and removes the chosen tag
+
+    cls
+
+    if ($script:SnapshotStatsRaw.tags.Count -eq 0 ) {
+        Write-Host "Selected snapshots has no tags to remove!"
+        Pause
+        return
+    }
+
+    #Build menu
+    [string[]]$m = @()
+    $m += "Select a tag to remove"
+    $m += ""
+    $script:SnapshotStatsRaw.tags | ForEach-Object {$m += $_}
+
+    Show-Menu -HeaderLines 2 -MenuLines $m
+
+    $i = $script:MenuChoice -1
+
+    Show-Menu -HeaderLines 2 -MenuLines @(
+        "Do you want to remove the tag `"$($script:SnapshotStatsRaw.tags[$i])`" from this snapshot?"
+        ""
+        "Yes"
+        "No"
+    )
+
+    if ($script:MenuChoice -eq 1) {
+        cls
+        $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --remove $(Quote-Path($script:SnapshotStatsRaw.tags[$i]))" + " $($script:SnapID)"
+        cmd /c $c
+    }
+}
+
+function Clear-SnapshotTags {
+    #I couldn't find a way to clear all tags in a single command so this seemed like the most efficient workaround
+
+    Show-Menu -HeaderLines 2 -MenuLines @(
+        "Are you sure you want to remove ALL tags from this snapshot?"
+        ""
+        "Yes"
+        "No"
+    )
+    if ($script:MenuChoice -eq 2) {return}
+    cls
+    $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --set PowerResticTemp" + " $($script:SnapID)"
+    cmd /c $c
+    cls
+    Find-ChangedSnapshot
+    cls
+    $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --remove PowerResticTemp" + " $($script:SnapID)"
+    cmd /c $c
 }
 
 function Get-PruneCommand {
@@ -1910,6 +2020,7 @@ function Get-RestoreDryRunWarningString {
 #1500 - CreateRepositoryMenu
 #1700 - RepositoryOperationMenu
 #1710 - SnapshotSelectionMenu
+#1715 - SnapshotOperationsMenu
 #1720 - CheckRepositoryMenu
 #1730 - CheckRepositoryDataTypeMenu
 #1740 - ConfirmCheckRepositoryMetadataOnlyMenu
@@ -1926,6 +2037,7 @@ function Get-RestoreDryRunWarningString {
 #1860 - ConfirmRestoreQueueMenu
 #1870 - ViewRestoreQueue
 
+cls
 Write-Host "Starting up..."
 Load-ini
 Write-Host "Clearing old cache..."
@@ -2192,10 +2304,10 @@ while ($true) {
     }
 
     :SnapshotSelectionMenu while ($MenuAddress -eq 1710) {
+        #Clear changes that could be cause by deeper menus
         $RestoreFromQueue.Clear()
-        #Only regen snapshots if they've been reset at a higher menu level
-        if ($Snapshots.count -eq 0) {Gen-Snapshots}
-        #Check again and make sure the repo even has snapshots
+        Gen-Snapshots
+
         if ($Snapshots.count -eq 0) {
             cls
             Write-Host "No snapshots found in $RepoPath!"
@@ -2203,25 +2315,46 @@ while ($true) {
             $MenuAddress = 1000 #TopRepositoryMenu
             break
         }
+
         Show-Menu -HeaderLines 2 -IndentHeader -FooterLines 4 -IndentFooter -AllowEnter -MenuLines @(
-                $Snapshots + "" + "Enter a snapshot's number or enter to return"
-            )
-            if ($MenuChoice -in "/","") {
-                $MenuAddress = 1700 #RepositoryOperationMenu
-                break
-            }
+            $Snapshots + "" + "Enter a snapshot's number or enter to return"
+        )
+
+        if ($MenuChoice -in "/","") {
+            $MenuAddress = 1700 #RepositoryOperationMenu
+        } else {
             $SnapID = $SnapIDs[$MenuChoice - 1]
-            Get-SnapshotStats
-            Format-SnapshotStats
-            Show-Menu -HeaderLines 18 -FooterLines 2 -AllowEnter -MenuLines @(
-                [string[]]("Snapshot Stats","") + $SnapshotStatsFormatted + "" + "Browse/restore from this snapshot" + "Forget this snapshot" + "Edit this snapshot's tags" + "" + "Enter to return"
-            )
-                switch ($MenuChoice) {
-                    1 {$MenuAddress = 1800} #BrowseAndRestoreMenu
-                    2 {Forget-Snapshot $SnapID}
-                    3 {$MenuAddress = 1760} #EditSnapshotTagsMenu
-                }
-            break
+            $MenuAddress = 1715 #SnapshotOperationsMenu
+        }
+        break SnapshotSelectionMenu
+    }
+
+    :SnapshotOperationsMenu while ($MenuAddress -eq 1715) {
+        #Generate data
+        Get-SnapshotStats
+        Format-SnapshotStats
+
+        #Build menu
+        [string[]]$m = @()
+        $m += "Snapshot Stats"
+        $m += ""
+        $m += $SnapshotStatsFormatted
+        $m += ""
+        $m += "Browse/restore from this snapshot"
+        $m += "Forget this snapshot"
+        $m += "Edit this snapshot's tags"
+        $m += ""
+        $m += "Enter to return"
+
+        Show-Menu -HeaderLines 18 -FooterLines 2 -AllowEnter -MenuLines $m
+
+        switch ($MenuChoice) {
+            1 {$MenuAddress = 1800} #BrowseAndRestoreMenu
+            2 {Forget-Snapshot $SnapID}
+            3 {$MenuAddress = 1760} #EditSnapshotTagsMenu
+            default {$MenuAddress = 1710} #SnapshotSelectionMenu
+        }
+        break SnapshotOperationsMenu
     }
 
     :CheckRepositoryMenu while ($MenuAddress -eq 1720) {
@@ -2326,10 +2459,22 @@ while ($true) {
     }
 
     :EditSnapshotTagsMenu while ($MenuAddress -eq 1760) {
-        cls
-        Write-Host "This feature is not yet implemented"
-        Pause
-        $MenuAddress = 1710
+        Show-Menu -HeaderLines 18 -MenuLines @(
+            [string[]]("Edit tags for the following snapshot","") + $SnapshotStatsFormatted + "" + "Add a tag" + "Remove a tag" + "Clear all tags" + "Return to snapshot"
+        )
+        switch ($MenuChoice) {
+            1 {Add-SnapshotTag}
+            2 {Remove-SnapshotTag}
+            3 {Clear-SnapshotTags}
+            4 {
+                $MenuAddress = 1715
+                break EditSnapshotTagsMenu
+            }
+        }
+        #Find the new ID and display the updated data
+        Find-ChangedSnapshot
+        Get-SnapshotStats
+        Format-SnapshotStats
     }
 
     :PruneRepositoryData while ($MenuAddress -eq 1770) {
