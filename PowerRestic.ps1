@@ -1857,6 +1857,38 @@ function Update-Ini {
     Load-ini
 }
 
+function Pin-ConformationMenu {
+    #Takes a path and ask for conformation before (Un)Pinning it
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [parameter(ParameterSetName="Pin")]
+        [switch]$Pin,
+        [parameter(ParameterSetName="Unpin")]
+        [switch]$Unpin
+    )
+
+    [string[]]$m = @()
+    if ($($Pin).IsPresent) {
+        $m += "Are you sure you want to pin the repository at $path"
+    } else {
+        $m += "Are you sure you want to unpin the repository at $path"
+    }
+    $m += ""
+    $m += "Yes"
+    $m += "No"
+
+    Show-Menu -HeaderLines 2 -MenuLines $m
+
+    if ($script:MenuChoice -eq 1) {
+        if ($($Unpin).IsPresent) {
+            Unpin-Repository $Path
+        } else {
+            Pin-Repository $Path
+        }
+    }
+}
+
 function Pin-Repository {
     #Appends repository pinning line to ini
     #Reloads ini to update settings and confirm
@@ -2223,13 +2255,7 @@ while ($true) {
         #Confirm removal
         if ($MenuChoice -is [int]) {
             $r = $Pinned[($MenuChoice - 1)]
-            Show-Menu -HeaderLines 2 -MenuLines @(
-                "Unpin the repository at $($r)?"
-                ""
-                "Yes"
-                "No"
-            )
-            if ($MenuChoice -eq 1) {Unpin-Repository $r}
+            Pin-ConformationMenu -Path $r -Unpin
         }
         #Go back up either way
         $MenuAddress = 1000 #TopRepositoryMenu
@@ -2299,9 +2325,13 @@ while ($true) {
             3 {$MenuAddress = 1710} #SnapshotSelectionMenu
             4 {
                 if ($AlreadyPinned -eq $true) {
-                    Unpin-Repository $RepoPath
+                    Pin-ConformationMenu -Path $RepoPath -Unpin
+                    if ($RepoPath -notin $Pinned) {
+                        $MenuAddress = 1000 #TopRepositoryMenu
+                        break RepositoryOperationMenu
+                    }
                 } else {
-                    Pin-Repository $RepoPath
+                    Pin-ConformationMenu -Path $RepoPath -Pin
                 }
             }
             5 {$MenuAddress = 1770} #PruneRepositoryData
