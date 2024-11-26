@@ -269,8 +269,9 @@ function Show-Menu{
         [switch]$ScrollMenu,
         [switch]$FolderMenu,
         [switch]$RestoreMenu,
-        [switch]$QueueMenu ,
+        [switch]$QueueMenu,
         [switch]$AllowEnter,
+        [switch]$SlashForBack,
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string[]]$MenuLines,
@@ -302,6 +303,7 @@ function Show-Menu{
             RestoreMenu = $($RestoreMenu).IsPresent
             QueueMenu = $($QueueMenu).IsPresent
             AllowEnter = $($AllowEnter).IsPresent
+            SlashForBack = $($SlashForBack).IsPresent
             MenuLines = $MenuLines
         }
         Split-Menu @splitMenuParams
@@ -366,6 +368,7 @@ function Show-Menu{
         RestoreMenu = $($RestoreMenu).IsPresent
         QueueMenu = $($QueueMenu).IsPresent
         AllowEnter = $($AllowEnter).IsPresent
+        SlashForBack = $($SlashForBack).IsPresent
     }
     Read-MenuChoice @menuChoiceParams
 }
@@ -383,6 +386,7 @@ function Split-Menu {
         [switch]$RestoreMenu,
         [switch]$QueueMenu,
         [switch]$AllowEnter,
+        [switch]$SlashForBack,
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string[]]$MenuLines
@@ -414,6 +418,7 @@ function Split-Menu {
             RestoreMenu = $($RestoreMenu).IsPresent
             QueueMenu = $($QueueMenu).IsPresent
             AllowEnter = $($AllowEnter).IsPresent
+            SlashForBack = $($SlashForBack).IsPresent
             MenuLines = ([string[]]$PageLines)
         }
         Show-Menu @showMenuParams
@@ -447,7 +452,8 @@ function Read-MenuChoice {
         [switch]$FolderMenu,
         [switch]$RestoreMenu,
         [switch]$QueueMenu,
-        [switch]$AllowEnter
+        [switch]$AllowEnter,
+        [switch]$SlashForBack
     )
 
     #Reset choice if left over
@@ -461,6 +467,11 @@ function Read-MenuChoice {
     #Single page flat menu
     if ($($ScrollMenu).IsPresent -eq $false -and $($FolderMenu).IsPresent -eq $false) {
         #not sure if something will go here
+    }
+    #Single page flat menu with back/exit
+    if ($($ScrollMenu).IsPresent -eq $false -and $($FolderMenu).IsPresent -eq $false -and $($SlashForBack).IsPresent -eq $true) {
+        write-host "`"/`" to go back"
+        $AcceptableChoices += "/"
     }
     #Multiple pages and flat menu
     if ($($ScrollMenu).IsPresent -eq $true -and $($FolderMenu).IsPresent -eq $false -and $($QueueMenu).IsPresent -eq $False) {
@@ -878,7 +889,7 @@ function Remove-SnapshotTag {
 
     Show-Menu -HeaderLines 2 -MenuLines $m
 
-    $i = $script:MenuChoice -1
+    $i = $script:MenuChoice - 1
 
     Show-Menu -HeaderLines 2 -MenuLines @(
         "Do you want to remove the tag `"$($script:SnapshotStatsRaw.tags[$i])`" from this snapshot?"
@@ -1124,8 +1135,8 @@ function Show-FileDetails {
     #Displays the data in $script:FileInfo
 
     cls
-    Show-Menu -HeaderLines 6 -FooterLines 2 -AllowEnter -MenuLines @(
-        $script:FileDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore" + "" + "Enter to return"
+    Show-Menu -HeaderLines 6 -SlashForBack -MenuLines @(
+        $script:FileDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore"
     )
 }
 
@@ -1184,8 +1195,8 @@ function Show-FolderDetails {
     #Displays the data in $script:FolderDetailsFormatted
 
     cls
-    Show-Menu -HeaderLines 6 -FooterLines 2 -AllowEnter -MenuLines @(
-        [string[]]("$(Convert-NixPathToWin $script:FolderPath)","") + $script:FolderDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore" + "" + "Enter to return"
+    Show-Menu -HeaderLines 6 -SlashForBack -MenuLines @(
+        [string[]]("$(Convert-NixPathToWin $script:FolderPath)","") + $script:FolderDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore"
     )
 }
 
@@ -1886,6 +1897,12 @@ function Unpin-Repository {
     } else {
         Write-Host "$Path not found in existing ini file!"
     }
+    if ($path -notin $script:Pinned) {
+        Write-host "Unpinned repository: $path"
+    } else {
+        Write-Host "Failed to unpin repository!"
+    }
+    pause
 }
 
 function Ask-RestoreOptions {
@@ -2069,7 +2086,7 @@ while ($true) {
 
     :TopRepositoryMenu while ($MenuAddress -eq 1000) {
         Clear-Variables
-        Show-Menu -HeaderLines 2 -MenuLines @(
+        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
             "Manage Repositories"
             ""
             "Choose a pinned repository"
@@ -2077,7 +2094,6 @@ while ($true) {
             "Unpin a repository"
             "Enter a repository path manually"
             "Create a repository"
-            "Return to main menu"
             "Exit"
         )
         switch ($MenuChoice) {
@@ -2086,8 +2102,8 @@ while ($true) {
             3 {$MenuAddress = 1300} #UnpinRepositoryMenu
             4 {$MenuAddress = 1400} #EnterRepositoryManuallyMenu
             5 {$MenuAddress = 1500} #CreateRepositoryMenu
-            6 {$MenuAddress = 0}    #MainMenu
-            7 {exit}
+            6 {exit}
+            "/" {$MenuAddress = 0}    #MainMenu
         }
         break
 
@@ -2108,12 +2124,8 @@ while ($true) {
             "$($Pinned.Count) pinned repositories found"
             ""
         )
-        [string[]] $PinnedRepoFooter = @(
-            ""
-            "Select a repository or enter to go back"
-        )
-        Show-Menu -HeaderLines 2 -FooterLines 2 -AllowEnter -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
-        if ($MenuChoice -in "/","") {
+        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines ($PinnedRepoHeader + $Pinned)
+        if ($MenuChoice -in "/") {
             #Go back
             $MenuAddress = 1000
             break ChoosePinnedRepositoryMenu
@@ -2198,16 +2210,12 @@ while ($true) {
         }
         #Build string array listing repository options
         [string[]] $PinnedRepoHeader = @(
-            "$($Pinned.Count) pinned repositories found"
+            "Select a repository to unpin"
             ""
-        )
-        [string[]] $PinnedRepoFooter = @(
-            ""
-            "Select a Repo to unpin or enter to go back"
         )
         #Select Repository
-        Show-Menu -HeaderLines 2 -FooterLines 2 -AllowEnter -MenuLines ($PinnedRepoHeader + $Pinned + $PinnedRepoFooter)
-        if ($MenuChoice -in "/","") {
+        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines ($PinnedRepoHeader + $Pinned)
+        if ($MenuChoice -in "/") {
             #Go back
             $MenuAddress = 1000
             break ChoosePinnedRepositoryMenu
@@ -2267,7 +2275,7 @@ while ($true) {
         }
 
         #Now we get to the menu
-        Show-Menu -HeaderLines 3 -MenuLines @(
+        Show-Menu -HeaderLines 3 -SlashForBack -MenuLines @(
             "$($RepoInfo.repo_path)"
             "Repository ID $($RepoInfo.id)"
             ""
@@ -2291,7 +2299,7 @@ while ($true) {
             3 {$MenuAddress = 1710} #SnapshotSelectionMenu
             4 {
                 if ($AlreadyPinned -eq $true) {
-                    Unpin-Repository $ResticPath
+                    Unpin-Repository $RepoPath
                 } else {
                     Pin-Repository $RepoPath
                 }
@@ -2299,6 +2307,7 @@ while ($true) {
             5 {$MenuAddress = 1770} #PruneRepositoryData
             6 {$MenuAddress = 0} #MainMenu
             7 {exit}
+            "/" {$MenuAddress = 1000} #TopRepositoryMenu
         }
         break
     }
@@ -2316,11 +2325,11 @@ while ($true) {
             break
         }
 
-        Show-Menu -HeaderLines 2 -IndentHeader -FooterLines 4 -IndentFooter -AllowEnter -MenuLines @(
-            $Snapshots + "" + "Enter a snapshot's number or enter to return"
+        Show-Menu -HeaderLines 2 -IndentHeader -FooterLines 4 -IndentFooter -SlashForBack -MenuLines @(
+            $Snapshots + "" + "Enter a snapshot's number"
         )
 
-        if ($MenuChoice -in "/","") {
+        if ($MenuChoice -in "/") {
             $MenuAddress = 1700 #RepositoryOperationMenu
         } else {
             $SnapID = $SnapIDs[$MenuChoice - 1]
@@ -2330,6 +2339,8 @@ while ($true) {
     }
 
     :SnapshotOperationsMenu while ($MenuAddress -eq 1715) {
+        #Clear changes that could be cause by deeper menus
+        $RestoreFromQueue.Clear()
         #Generate data
         Get-SnapshotStats
         Format-SnapshotStats
@@ -2343,10 +2354,8 @@ while ($true) {
         $m += "Browse/restore from this snapshot"
         $m += "Forget this snapshot"
         $m += "Edit this snapshot's tags"
-        $m += ""
-        $m += "Enter to return"
 
-        Show-Menu -HeaderLines 18 -FooterLines 2 -AllowEnter -MenuLines $m
+        Show-Menu -HeaderLines 18 -SlashForBack -MenuLines $m
 
         switch ($MenuChoice) {
             1 {$MenuAddress = 1800} #BrowseAndRestoreMenu
@@ -2358,19 +2367,16 @@ while ($true) {
     }
 
     :CheckRepositoryMenu while ($MenuAddress -eq 1720) {
-        Show-Menu -HeaderLines 2 -MenuLines @(
+        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
             "Repo ID $($RepoInfo.id) at $($RepoInfo.repo_path) selected"
             ""
             "Check repository metadata integrity"
             "Check repository metadata and data integrity"
-            "Return to main menu"
-            "Exit"
         )
         switch ($MenuChoice) {
             1 {$MenuAddress = 1740} #ConfirmCheckRepositoryMetadataOnlyMenu
             2 {$MenuAddress = 1730} #CheckRepositoryDataTypeMenu
-            3 {$MenuAddress = 0}      #MainMenu
-            4 {exit}
+            "/" {$MenuAddress = 1700} #RepositoryOperationMenu
         }
         break CheckRepositoryMenu
     }
@@ -2459,14 +2465,14 @@ while ($true) {
     }
 
     :EditSnapshotTagsMenu while ($MenuAddress -eq 1760) {
-        Show-Menu -HeaderLines 18 -MenuLines @(
-            [string[]]("Edit tags for the following snapshot","") + $SnapshotStatsFormatted + "" + "Add a tag" + "Remove a tag" + "Clear all tags" + "Return to snapshot"
+        Show-Menu -HeaderLines 18 -SlashForBack -MenuLines @(
+            [string[]]("Edit tags for the following snapshot","") + $SnapshotStatsFormatted + "" + "Add a tag" + "Remove a tag" + "Clear all tags"
         )
         switch ($MenuChoice) {
             1 {Add-SnapshotTag}
             2 {Remove-SnapshotTag}
             3 {Clear-SnapshotTags}
-            4 {
+            "/" {
                 $MenuAddress = 1715
                 break EditSnapshotTagsMenu
             }
@@ -2525,7 +2531,7 @@ while ($true) {
                     Confirm-ExitRestore
                     #Exit choices from previous menus
                     if ($MenuChoice -in 1,"/") {
-                        $MenuAddress = 1710 #SnapshotSelectionMenu
+                        $MenuAddress = 1715 #SnapshotOperationsMenu
                     #Restore queued items
                     } elseif ($MenuChoice -eq 2) {
                         $MenuAddress = 1840 #RestoreQueueDestinationMenu
@@ -2656,14 +2662,12 @@ while ($true) {
     :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810) {
         #Pick destination for a single item chosen for restore
 
-        Show-Menu -HeaderLines 2 -FooterLines 2 -AllowEnter -MenuLines @(
+        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
             "$(Convert-NixPathToWin($RestoreFromSingle.path)) selected"
             ""
             "Restore to original location"
             "Browse other restore location"
             "Enter restore location manually"
-            ""
-            "Enter to return to last screen"
         )
         #Set $RestoreTo and move on to next menu
         switch ($MenuChoice) {
@@ -2762,10 +2766,8 @@ while ($true) {
         $m += "Enter restore location manually"
         $m += "Review queued items"
         $m += "Clear restore queue"
-        $m += ""
-        $m += "Enter to return to last screen"
 
-        Show-Menu -HeaderLines $l -FooterLines 2 -AllowEnter -MenuLines $m
+        Show-Menu -HeaderLines $l -SlashForBack -MenuLines $m
 
         switch ($MenuChoice) {
             1 {
@@ -2881,9 +2883,9 @@ while ($true) {
     ###################################################################################################
 
     :TopBackupTaskMenu while ($MenuAddress -eq 2000) {
-        write-host ""
-        write-host "Not implemented yet.  Press enter to continue"
-        read-host
+        cls
+        write-host "Backup task creation and management coming soon!"
+        pause
         $MenuAddress = 0
     }
 }
