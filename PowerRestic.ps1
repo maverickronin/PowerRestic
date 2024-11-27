@@ -957,6 +957,41 @@ function Gen-FolderData {
     $script:FolderData = cmd /c $c | ConvertFrom-Json
 }
 
+function Jump-ToSnapshotPath {
+    #Lets user manually enter a path to start browsing from
+    #Returns true after entering a path found in the snapshot and false after running out of tries
+
+    $i = 0
+    $valid = $false
+    while ($valid -eq $false -and $i -lt $script:Options.Retries) {
+        cls
+        Write-Host "Please enter a path in this snapshot to jump to"
+        Write-Host "WARNING: The path is case sensitive"
+        $p = Read-Host
+        $q = (Validate-WinPath $p)
+        if ($q[0] -eq $false) {
+            Write-Host "Please enter a valid path"
+            pause
+            $i++
+            continue
+        } else {
+            $script:FolderPath = Convert-WinPathToNix($q[1])
+            Gen-FolderData
+            if ($script:FolderData.Count -gt 0) {
+                $true
+                return
+            } else {
+                Write-Host "Folder $(Quote-Path($q)) does not exist in this snapshot!"
+                Pause
+                continue
+            }
+        }
+        $i++
+    }
+    $false
+    return
+}
+
 function Check-RootFolderPath {
     #Workaround to skip past the *nix-type "/" path root and right to a drive's contents when backup root is a single DOS style drive letter
 
@@ -987,6 +1022,17 @@ function Sort-FolderData {
     $script:FolderDirs = $script:FolderDirs | Sort-Object -Property name
     $script:FolderFiles = $script:FolderFiles | Sort-Object -Property name
     $script:FolderDirsAndFiles = $script:FolderDirs  + $script:FolderFiles
+}
+
+function Convert-WinPathToNix {
+    #Converts absolute, drive letter anchored windows path to *nix style /<Drive>/<Folder>
+    param ([string]$PathIn)
+
+    $PathOut = "\" + $PathIn[0] + $PathIn.Substring(2)
+    $PathOut = $PathOut.Replace("\","/")
+    if ($PathOut[-1] -ne "/") {$PathOut += "/"}
+    $PathOut
+    return
 }
 
 function Convert-NixPathToWin {
@@ -1028,7 +1074,9 @@ function Format-FolderDirsFiles {
         $script:FolderLines += "\"
     #Or convert a real path and add a trailing slash
     } else {
-        $script:FolderLines += (Convert-NixPathToWin $script:FolderPath) + "\"
+        $l = Convert-NixPathToWin $script:FolderPath
+        if ($l[-1] -ne "\") {$l += "\"}
+        $script:FolderLines += $l
     }
 
     $script:FolderLines += ""
@@ -1450,7 +1498,7 @@ function Validate-WinPath {
     $illegalChars = @("<",">",":","`"","/","|","?","*")
 
     #Trim whitespace, trailing dots are illegal - Will return this if nothing else is wrong
-    $pathIn = ($pathIn.Trim()).Trim(".")
+    $pathIn = ($pathIn.Trim()).Trim(".","`"")
 
     #Check it starts with a proper drive letter prompt
     if (($pathIn -notmatch '^[a-z,A-Z]{1}:\\') -and -not($Relative)) {
@@ -2382,6 +2430,7 @@ while ($true) {
         $m += $SnapshotStatsFormatted
         $m += ""
         $m += "Browse/restore from this snapshot"
+        $m += "Jump to path in this snapshot"
         $m += "Forget this snapshot"
         $m += "Edit this snapshot's tags"
 
@@ -2389,8 +2438,14 @@ while ($true) {
 
         switch ($MenuChoice) {
             1 {$MenuAddress = 1800} #BrowseAndRestoreMenu
-            2 {Forget-Snapshot $SnapID}
-            3 {$MenuAddress = 1760} #EditSnapshotTagsMenu
+            2 {
+                if (Jump-ToSnapshotPath) {
+                    $MenuAddress = 1800
+                    $KeepPage = $true
+                }
+            }
+            3 {Forget-Snapshot $SnapID}
+            4 {$MenuAddress = 1760} #EditSnapshotTagsMenu
             default {$MenuAddress = 1710} #SnapshotSelectionMenu
         }
         break SnapshotOperationsMenu
@@ -2542,7 +2597,7 @@ while ($true) {
         #down to lower level directories and files with options to view info and restore single files or
         #entire folders
 
-        #Just get root path when initially entering menu
+        #Get root path when initially entering menu, skip if circling back with $KeepPage
         if ($KeepPage -eq $false) {Check-RootFolderPath}
         #Cycle though menu
         #Changes to what is displayed all occur within the loops
