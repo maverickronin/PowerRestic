@@ -1,5 +1,5 @@
 ﻿####################################################################
-#Reset settings
+#Reset settings and other declarations
 ####################################################################
 #Resets everything else if you're using this in ISE/VS Code or something
 
@@ -8,6 +8,12 @@ $FormatEnumerationLimit = -1
 $ResticPath = $null
 $MenuAddress = 0
 
+enum RestoreOverwriteOption {
+    Different
+    Newer
+    Never
+}
+
 ####################################################################
 #Functions
 ####################################################################
@@ -15,7 +21,8 @@ $MenuAddress = 0
 function Clear-Variables {
     #Clear menu navigation relevant variables when needed while ascending menu trees
 
-    try {remove-variable -name MenuChoice -Scope script -ErrorAction Stop} catch {} #Menu choice entered by user
+    try {Remove-Variable -name MenuChoice -Scope script -ErrorAction Stop} catch {} #Menu choice entered by user
+    ##Use Remove-Variable here and other places in order to reset the type for next use
     $script:MenuPage = 1 #For keeping the same page if the menu options don't change
     $script:KeepPage = $false #as above
     $script:RepoPath = $null #Path to root folder of selected repository
@@ -23,7 +30,7 @@ function Clear-Variables {
     $script:RepoPasswordCommand = $null #No password flag added to repo command is set
     $script:env:RESTIC_PASSWORD = $null #Environment variable Restic  reads the password from
     $script:RepoStats = $null #Object repository information from different  commands is merged into
-    $script:RepoUnlocked = $false #Set to true after basic info is successfully read from repository
+    $script:RepoOpened = $false #Set to true after basic info is successfully read from repository
     $script:RepoInfo = $null #Identifying info read from repo as part of testing path/password
     [array]$script:SnapIDs = @() #Restic's short snapshot IDs.  Used to get info about or browse a specific snapshot
     $script:SnapID = $null #Selected snapshot short ID for querying info or browsing
@@ -45,7 +52,7 @@ function Clear-Variables {
     $script:RestoreTo = "" #Folder to restore the item to
     $script:NewRepoPath = "" #Path to create new repo at
     $script:RepoCheckCommand = "" #Command specifying options for checking repository integrity
-    $script:RestoreOverwriteOption = "Different" #if/when to overwrite existing files - Different, Newer, Never
+    $script:RestoreOverwriteOption = [RestoreOverwriteOption]::Different #if/when to overwrite existing files - Different, Newer, Never
     $script:RestoreDeleteOption = $false #If to delete existing files  not in snapshot
     $script:RestoreDryRunOption = $false #Dry run to double check dangerous operations
     $script:LastRestoreLog = "" #File name of last saved restore log file
@@ -56,7 +63,6 @@ function Clear-Variables {
     [array]$script:WinHostFolders = @() #Array of subfolders of $WinHostFolderPath as objects
     [string[]]$script:WinHostFolderLines = @() #Subfolders of $WinHostFolderPath formatted as strings for menu display
 }
-
 function Load-ini {
     #Try to load ini file and figure out/create required settings if the ini file is missing
 
@@ -83,7 +89,7 @@ function Load-ini {
             #noop
         #Throw everything else in a generic option object
         } else {
-            #Skip duplicate names
+            #Skip second item if there are duplicate names
             if ((($line.split("="))[0]).trim() -notin $script:Options.PSObject.Properties.Name) {
                 $script:Options | Add-Member -NotePropertyName (($line.split("="))[0]).trim() $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim() | out-null
             }
@@ -264,13 +270,14 @@ function Show-Menu{
     #If the number of $MenuLines minus $HeaderLines and $FooterLines exceeds $Options.DisplayLines all of Show-Menu's
     #inputs will be fed to Split-Menu, chopped up, and fed back to Show-Menu
     #Several parameters specify types of menu for navigation purposes
+    #These are passed through to Read-MenuChoice where they actually do something
 
     param (
         [int]$HeaderLines = 0,
         [switch]$IndentHeader,
         [int]$FooterLines = 0,
         [switch]$IndentFooter,
-        [switch]$ScrollMenu,
+        [switch]$ScrollMenu, #This should only be set automatically from within Split-Menu
         [switch]$RestoreFolderMenu,
         [switch]$LocalFolderMenu,
         [switch]$QueueMenu,
@@ -282,6 +289,7 @@ function Show-Menu{
         [switch]$noCls
     )
 
+    #Parameter set would get too messy so just "manually" check exclusive options aren't specified
     $f = 0
     if ($($RestoreFolderMenu).IsPresent) {$f++}
     if ($($LocalFolderMenu).IsPresent) {$f++}
@@ -369,7 +377,7 @@ function Show-Menu{
     #write out menu
     write-host $output
 
-    #Input is taken and validated in a separate function
+    #User input is taken and validated in a separate function
     $menuChoiceParams = @{
         NumberOfOptions = $NumberOfOptions
         ScrollMenu = $($ScrollMenu).IsPresent
@@ -384,7 +392,7 @@ function Show-Menu{
 
 function Split-Menu {
     #This mostly takes the same parameters as show-menu
-    #it chops them up into smaller sections and feeds them back to Show-Menu
+    #it paginates the choices, preserving the header and footer on each page, feeding each page back to Show-Menu
 
     param (
         [int]$HeaderLines,
@@ -414,7 +422,7 @@ function Split-Menu {
     #increment $FooterLines to insert page numbers at bottom
     $FooterLines = $FooterLines + 1
 
-    #Call Show-Menu once for each page
+    #Loop of menu pages
     while ($true) {
         $PageLines = ($MenuHeader + $MenuOptions[(($script:MenuPage - 1) * $Options.DisplayLines)..((($script:MenuPage - 1) * $Options.DisplayLines) + ($Options.DisplayLines - 1))] + $MenuFooter + "Page $script:MenuPage/$NumberOfPages")
         $showMenuParams = @{
@@ -422,7 +430,7 @@ function Split-Menu {
             IndentHeader = $($IndentHeader).IsPresent
             FooterLines = $FooterLines
             IndentFooter = $($IndentFooter).IsPresent
-            ScrollMenu = $true
+            ScrollMenu = $true #This should always be true if we're already in this function
             RestoreFolderMenu = $($RestoreFolderMenu).IsPresent
             LocalFolderMenu = $($LocalFolderMenu).IsPresent
             QueueMenu = $($QueueMenu).IsPresent
@@ -439,6 +447,7 @@ function Split-Menu {
         if ($script:MenuPage -gt $NumberOfPages) {$script:MenuPage = 1}
         if ($script:MenuPage -lt 1) {$script:MenuPage = $NumberOfPages}
         ####Add multiplier for number of pages in to $MenuChoice to match the full array of items
+        ####the calling code is going to index from
         if ($script:MenuChoice -is [int]) {
             $script:MenuChoice = [int]($script:MenuChoice + (($script:MenuPage - 1) * $Options.DisplayLines))
             break
@@ -452,7 +461,7 @@ function Split-Menu {
 function Read-MenuChoice {
     #Validates that input is within the number of listed choices
     #Parameters for type of menu change add/remove other acceptable options
-    #Displays addition input options
+    #Displays additional input options
 
     param (
         [Parameter(Mandatory = $true)]
@@ -483,44 +492,42 @@ function Read-MenuChoice {
         write-host "Enter for next screen, `"+`" for last screen, `"/`" to exit this menu"
         $AcceptableChoices += "+","/"
     }
-
     #Browse/restore menus - non-scrolling and scrolling
     if ($($ScrollMenu).IsPresent -eq $false -and $($RestoreFolderMenu).IsPresent) {
         write-host "`"-`" to go up a directory, `".`" for information about current directory,`"*`" to restore queued items, `"/`" to exit this menu"
         $AcceptableChoices += "-",".","/","*"
     }
     if ($($ScrollMenu).IsPresent -eq $true -and $($RestoreFolderMenu).IsPresent -eq $true) {
-        write-host  "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`" for information about current directory, `"*`" to restore queued items, `"/`" to exit this menu"
+        write-host "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`" for information about current directory, `"*`" to restore queued items, `"/`" to exit this menu"
         $AcceptableChoices += "+","-",".","/","*"
     }
-
     #Restore queue menu - non-scrolling and scrolling
     if ($($ScrollMenu).IsPresent -eq $false -and $($QueueMenu).IsPresent -eq $true) {
-        write-host  "Enter `"-`" to clear the queue or `"/`" to exit this menu"
+        write-host "Select an item to remove it from the queue"
+        write-host "Enter `"-`" to clear the queue or `"/`" to go back"
         $AcceptableChoices += "-","/"
     }
     if ($($ScrollMenu).IsPresent -eq $true -and $($QueueMenu).IsPresent -eq $true) {
-        write-host  "Enter for next screen, `"+`" for last screen, `"-`" to clear the queue, or `"/`" to exit this menu"
+        write-host "Select an item to remove it from the queue"
+        write-host "Enter for next screen, `"+`" for last screen, `"-`" to clear the queue, or `"/`" to go back"
         $AcceptableChoices += "+","-","/"
     }
-
     #Local drive menu - non-scrolling and scrolling
     if ($($ScrollMenu).IsPresent -eq $false -and $($LocalFolderMenu).IsPresent -eq $true) {
         write-host "`"-`" to go up a directory, `".`" to make a new directory, `"*`" to select this directory, `"/`" to exit this menu"
         $AcceptableChoices += "-",".","*","/"
     }
     if ($($ScrollMenu).IsPresent -eq $true -and $($LocalFolderMenu).IsPresent -eq $true) {
-        write-host  "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`"  to make a new directory, `"*`" to select this directory, or `"/`" to exit this menu"
+        write-host "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`"  to make a new directory, `"*`" to select this directory, or `"/`" to exit this menu"
         $AcceptableChoices += "+","-",".","*","/"
     }
-
 
     #Get input and check it
     $Script:MenuChoice = read-host
     #Make sure that numbers count as ints to prevent problems in other places
     try {$Script:MenuChoice = [int]::Parse($Script:MenuChoice)} catch {}
-    #Double condition because -in/-notin counts "" as in any array
-    while ($Script:MenuChoice -notin $AcceptableChoices -or ($($AllowEnter).IsPresent -eq $false -and $Script:MenuChoice -eq "")) {
+    #Triple conditions because -in/-notin counts "" as in any array
+    while ($Script:MenuChoice -notin $AcceptableChoices -or (($($AllowEnter).IsPresent -eq $false -and $($ScrollMenu).IsPresent -eq $false) -and $Script:MenuChoice -eq "")) {
         write-host ""
         write-host "Please enter a valid choice."
         write-host ""
@@ -533,6 +540,7 @@ function Read-MenuChoice {
 function Format-Bytes  {
     #Make bytes easily readable without drawing commas on your screen
     param (
+        [Parameter(Mandatory = $true)]
         [int64]$bytes
     )
     switch ($bytes) {
@@ -547,7 +555,10 @@ function Format-Bytes  {
 function Open-Repo {
     #"Opens" a repo by checking its path and password and storing them for use in other commands
 
-    param ([string]$path)
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$path
+    )
 
     cls
     #Confirm that folder even exists
@@ -562,15 +573,15 @@ function Open-Repo {
 
     #Automatically try to open with no password
     $i = -1 #Offset for automatic first try with no password
-    $triedLocked = $false #Only attempt to unlock the repo once
+    $triedLocked = $false #Only attempt remove exclusive locks on the repo once
     $script:RepoPasswordCommand = " --insecure-no-password"
     $env:RESTIC_PASSWORD = ""
-    :TryRepoPasswords while ($i -lt $script:Options.Retries -and $script:RepoUnlocked -eq $false) {
+    :TryRepoPasswords while ($i -lt $script:Options.Retries -and $script:RepoOpened -eq $false) {
         #Skip asking for password on first count
         if ($i -gt -1) {
             $script:RepoPasswordCommand = ""
             Write-Host "Please enter the password for this repository:"
-            #Silly workaround encrypting/decrypting because it's the only way to hide input in PS5
+            #Silly workaround encrypting/decrypting because it's the only way to hide input in PS5.1
             $HiddenPassword = Read-Host -AsSecureString
             $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($HiddenPassword)
             $RepoPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
@@ -599,6 +610,7 @@ function Open-Repo {
                     pause
                     break TryRepoPasswords
                 #Try to unlock and decrement retry counter it this is the first time
+                #passes lock message which can include username and PID
                 } else {
                     Unlock-Repo -LockMessage $p.ToString() -LockedRepo $path
                     $i = $i - 1
@@ -608,15 +620,11 @@ function Open-Repo {
             }
         }
 
+        #If it was not locked and the PW was correct there will be parsable json, if not it failed
         try {$o = $o | ConvertFrom-Json} catch {$o=$null}
-        # #redirection shenanigans to ensure a hard fail and hide restic's output
-        # try {
-        #     $o = cmd /c $c *>&1 | ConvertFrom-Json
-        # } catch {$o=$null}
 
-        #Basic check of the hex identifiers that cat config returns as check for valid data
         if ($o.version -is [int] -and $o.id -match'[0-9a-f]+' -and $o.chunker_polynomial -match '[0-9a-f]+') {
-            $script:RepoUnlocked = $true
+            $script:RepoOpened = $true
             $script:RepoPath = $path
             $o | Add-Member -NotePropertyName "repo_path" $script:RepoPath
             $script:RepoInfo = $o
@@ -638,8 +646,11 @@ function Open-Repo {
 
 function Unlock-Repo {
     #Displays lock message passed to it and asks if user wants to remove the lock
+    #If it find a PID in the lock message it will try and check if the process is still active on this machine
     param (
+        [Parameter(Mandatory = $true)]
         [string]$LockMessage,
+        [Parameter(Mandatory = $true)]
         [string]$LockedRepo
     )
 
@@ -651,6 +662,7 @@ function Unlock-Repo {
         $m += "Raw error message from repository at $LockedRepo is: $LockMessage"
     }
 
+    #Try and find a PID and see if it's still active
     if ($LockMessage -match '(?<=PID\ )\d*') {
         try {
             [int]::Parse($Matches[0]) | out-null
@@ -673,8 +685,8 @@ function Unlock-Repo {
     $m += ""
     $m += "WARNING: Removing the lock while another instance of restic is still active may result in DATA LOSS"
 
+    #Double check with user
     Show-Menu -HeaderLines 4 -FooterLines 2 -MenuLines $m
-
     if ($MenuChoice -eq 1) {
         Show-Menu -HeaderLines 2 -MenuLines @(
             "Are you sure you wish to FORCIBLY remove this lock?"
@@ -694,7 +706,11 @@ function Unlock-Repo {
 function Quote-Path {
     #Adds quotes around a file path if it has spaces, for use in building command line arguments
 
-    param ([string[]]$Path)
+    param (
+        [Parameter(Mandatory = $true)]
+        [string[]]$Path
+    )
+
     if (" " -in $Path.ToCharArray()) {
         $Path = "`"" + $Path + "`""
     }
@@ -773,7 +789,7 @@ function Get-SnapshotStats {
 }
 
 function Format-SnapshotStats {
-    #Formats $script:SnapshotStatsRaw int an array of strings holding a nice readable table of info
+    #Formats $script:SnapshotStatsRaw into an array of strings holding a nice readable table of info
 
     [string[]]$script:SnapshotStatsFormatted = @()
     $SnapshotTable = new-object PSobject
@@ -821,12 +837,15 @@ function Forget-Snapshot {
         $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " forget" + " $SnapID -vv"
         cmd /c $c
         pause
+        #Regen snapshots so the old one disappears from the UI
         Gen-Snapshots
     }
 }
 
 function Find-ChangedSnapshot {
-    #Find new snapshot ID after changing tags, updating $script:SnapID
+    #Find new snapshot ID after changing tags because that also changes its ID
+    #Matches by looking for the same time as the original
+    #Updates $script:SnapID
 
     cls
     write-host "Finding updated snapshot..."
@@ -849,13 +868,12 @@ $pattern = @"
 [\\/'`""`\{\}\[\],;:^\*%|]
 "@
 
-    $confirmed = $false
     $validated = $false
-    while ($confirmed -eq $false -and $validated -eq $false) {
+    while ($validated -eq $false) {
         cls
         Write-Host "Enter the tag you would like to add:"
         $tag = Read-Host
-        $tag.Trim() | Out-Null
+        $tag = $tag.Trim()
         if ($tag -match $pattern) {
             Write-Host ""
             Write-Host "Please enter a tag without any of the following characters:"
@@ -880,7 +898,7 @@ $pattern = @"
 }
 
 function Remove-SnapshotTag {
-    #Displays a menu with all tags and removes the chosen tag
+    #Displays a menu with all tags and removes the selected tag after conformation
 
     cls
 
@@ -916,6 +934,7 @@ function Remove-SnapshotTag {
 
 function Clear-SnapshotTags {
     #I couldn't find a way to clear all tags in a single command so this seemed like the most efficient workaround
+    #Use --set to make a single temporary tag with a hard coded name and then remove
 
     Show-Menu -HeaderLines 2 -MenuLines @(
         "Are you sure you want to remove ALL tags from this snapshot?"
@@ -924,6 +943,7 @@ function Clear-SnapshotTags {
         "No"
     )
     if ($script:MenuChoice -eq 2) {return}
+
     cls
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --set PowerResticTemp" + " $($script:SnapID)"
     cmd /c $c
@@ -935,7 +955,8 @@ function Clear-SnapshotTags {
 }
 
 function Get-PruneCommand {
-    #Creates command line options string based on options set in script
+    #Creates command line options string based on set options
+    #Hard coded defaults can be changed in ini file
 
     $s = ""
     if ($script:Options.PruneMaxRepackSize -ne $null) {$s += " --max-repack-size $($script:Options.PruneMaxRepackSize)"}
@@ -949,6 +970,9 @@ function Get-PruneCommand {
 }
 
 Function Prune-Repo {
+    #Runs a prune command with or without a dry run option
+    #Hard coded defaults can be changed in ini file
+
     param([switch]$DryRun)
 
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " prune" + " $SnapID -vv" + "$(Get-PruneCommand)"
@@ -958,7 +982,7 @@ Function Prune-Repo {
 }
 
 function Gen-FolderData {
-    #Populates $script:FolderData with subfolders and files in $script:FolderPath in a snapshot
+    #Populates $script:FolderData with subfolders and files in $script:FolderPath from a snapshot
 
     cls
     write-host "Getting folder contents..."
@@ -967,12 +991,11 @@ function Gen-FolderData {
 }
 
 function Jump-ToSnapshotPath {
-    #Lets user manually enter a path to start browsing from
+    #Lets user manually enter a path to start browsing from by setting $script:FolderPath
     #Returns true after entering a path found in the snapshot and false after running out of tries
 
     $i = 0
-    $valid = $false
-    while ($valid -eq $false -and $i -lt $script:Options.Retries) {
+    while ($i -lt $script:Options.Retries) {
         cls
         Write-Host "Please enter a path in this snapshot to jump to"
         Write-Host "WARNING: The path is case sensitive"
@@ -985,12 +1008,16 @@ function Jump-ToSnapshotPath {
             continue
         } else {
             $script:FolderPath = Convert-WinPathToNix($q[1])
+            #Restic always returns an object for the snapshot itself and even for
+            #an empty folder it returns an object for the empty parent folder.
+            #The count will always be at least one, even if the path is gibberish
+            #2 is an empty folder and 3 or more means there's something in the folder
             Gen-FolderData
-            if ($script:FolderData.Count -gt 0) {
+            if ($script:FolderData.Count -gt 1) {
                 $true
                 return
             } else {
-                Write-Host "Folder $(Quote-Path($q)) does not exist in this snapshot!"
+                Write-Host "Folder $(Quote-Path($q[1])) does not exist in this snapshot!"
                 Pause
                 continue
             }
@@ -1014,15 +1041,16 @@ function Check-RootFolderPath {
 }
 
 function Sort-FolderData {
-    #Fix case sensitive sort
-    #Make separate lists of files and folders so Format-FolderDirsFiles can format them easier for the menu
-    #Make one big list for pulling data out when chosen from menu
+    #Fixes case sensitive sort
+    #Makes separate lists of files and folders so Format-FolderDirsFiles can format them easier for the menu
+    #Makes one big list for pulling data out when chosen from menu
 
     [array]$script:FolderDirs = @()
     [array]$script:FolderFiles = @()
     [array]$script:FolderDirsAndFiles = @()
     foreach ($item in $script:FolderData) {
-        if ($item.type -eq "dir" -and $item.path -eq $script:FolderPath) {continue}
+        #The parent folder is always included before its child items so skip it
+        if ($item.type -eq "dir" -and $item.path.Trim("/") -eq $script:FolderPath.Trim("/")) {continue}
         switch ($item.type) {
             "dir" {$script:FolderDirs += $item}
             "file" {$script:FolderFiles += $item}
@@ -1041,7 +1069,7 @@ function Gen-WinHostDrives {
 
 function Browse-RestoreToPath {
     #Browse local drives to pick a path to restore to
-    #Returns user selected path or $null on exit
+    #Returns user selected path or a $null on exit
 
     #First display fixed root drives
     Gen-WinHostDrives
@@ -1061,8 +1089,8 @@ function Browse-RestoreToPath {
             return
         }
 
-        #Display subfolders and break when Pop-WinDirectory goes above the drive root and returns a question mark
-        :WinHostDriveSubfolders while ($script:WinHostFolderPath -ne "?") {
+        #Display subfolders and break when Pop-WinDirectory goes above the drive root and returns aan empty string
+        :WinHostDriveSubfolders while ($script:WinHostFolderPath -ne "") {
             Gen-WinHostFolders
 
             [string[]]$m = @()
@@ -1084,7 +1112,7 @@ function Browse-RestoreToPath {
             #Pop directory or break and go back to the list of drives when Pop-WinDirectory returns a question mark
             } elseif ($MenuChoice -eq "-") {
                 $script:WinHostFolderPath = Pop-WinDirectory $script:WinHostFolderPath
-                if ($script:WinHostFolderPath -eq "?") {break WinHostDriveSubfolders}
+                if ($script:WinHostFolderPath -eq "") {break WinHostDriveSubfolders}
             #New folder
             } elseif ($script:MenuChoice -eq ".") {
                 New-WinHostFolder
@@ -1103,19 +1131,16 @@ function Browse-RestoreToPath {
 }
 
 function Gen-WinHostFolders {
-    #gets and formats subfolders for $WinHostFolderPath for display in Show-Menu
+    #Gets and formats subfolders for $WinHostFolderPath for display in Show-Menu
 
     #Make sure there is always a trailing slash to ensure gci works with drive letters
     if ($script:WinHostFolderPath[-1] -ne "\") {$script:WinHostFolderPath += "\"}
 
     #Make sure there are actually subfolders
     $script:WinHostFolders = gci -Force $script:WinHostFolderPath | where {$_.PsIsContainer} | Sort-Object -Property name
+    #Even if the count is 0 this will make the string "\\" and clutter up the menu
     if ($script:WinHostFolders.count -gt 0) {
         $script:WinHostFolderLines = ($script:WinHostFolders).Name | ForEach-Object {"\" + $_ + "\"}
-    #If not, make the single option an informational message and make $WinHostFolders be this single directory so selecting
-    #it will just keep the menu in the same place
-    } else {
-        #$script:WinHostFolders = @($script:WinHostFolders | where {$_.fullname -like $($script:WinHostFolderPath).Trim("\")})
     }
 }
 
@@ -1177,7 +1202,10 @@ function New-WinHostFolder {
 
 function Convert-WinPathToNix {
     #Converts absolute, drive letter anchored windows path to *nix style /<Drive>/<Folder>
-    param ([string]$PathIn)
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$PathIn
+    )
 
     $PathOut = "\" + $PathIn[0] + $PathIn.Substring(2)
     $PathOut = $PathOut.Replace("\","/")
@@ -1189,7 +1217,10 @@ function Convert-WinPathToNix {
 function Convert-NixPathToWin {
     #Convert the *nix type paths that restic uses internally to windows paths
 
-    param ([string]$PathIn)
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$PathIn
+        )
 
     #Flip the slash if that's all there is
     if ($PathIn -eq "/") {
@@ -1197,8 +1228,9 @@ function Convert-NixPathToWin {
         $PathOut
         return
     }
+
     $PathOut = ""
-    #Convert a /C/ drive root to C:\
+    #Convert a /X drive root to X:
     if ($PathIn -match '^/[A-Z]$') {
         $PathOut = $PathIn.Substring(1) + ":"
     }
@@ -1213,10 +1245,11 @@ function Convert-NixPathToWin {
 }
 
 function Format-FolderDirsFiles {
-    #Make array for $Show-Menu to list a snapshot's files and folders with header, footer,
+    #Build array of strings array for $Show-Menu to list a snapshot's files and folders with header, footer,
     #and leading and/or trailing slashes added for clarity between files and directories
+    #as seen in the menu
 
-    [array]$script:FolderLines = @()
+    [string[]]$script:FolderLines = @()
 
     #Prefix header
     $script:FolderLines += "Now browsing:"
@@ -1257,14 +1290,18 @@ function Pop-NixDirectory {
     #Returns *nix directory path one level up from input
 
     param (
+        [Parameter(Mandatory = $true)]
         [string]$pathIn
     )
-    #Already at root
+    #Already at root, return empty string and caller should interpret it as an error
     if ($pathIn -match '^/$') {
         ""
         return
+    }
+    #Trim trailing backslash to make the regex easier
+    if ($pathIn[-1] -eq "/") {$pathIn = $pathIn.Substring(0,$pathIn.Length - 1)}
     #Check if there is only one folder below the root slash and then go up to root
-    } elseif ($pathIn -match '^[^/]*/{1}[^/]*$') {
+    if ($pathIn -match '^[^/]*/{1}[^/]*$') {
         "/"
         return
         #Matches everything ahead of the last forwards slash in the string to go up one level
@@ -1279,14 +1316,16 @@ function Pop-NixDirectory {
 
 function Pop-WinDirectory {
     #Returns Windows directory path one level up from input
+
     param (
+        [Parameter(Mandatory = $true)]
         [string]$pathIn
     )
 
     #Check if we're already at a drive root - X:\ or X:
-    #Return a question mark as something obviously different for the caller to deal with
+    #Return empty string as error the caller to handle
     if ($pathIn -match '^[A-Z]:\\$' -or $pathIn -match '^[A-Z]:$') {
-        "?"
+        ""
         return
     } else {
         #Trim trailing backslash to make the regex easier
@@ -1299,26 +1338,13 @@ function Pop-WinDirectory {
             throw "Could not parse Windows directory!"
         }
     }
-    # #Matches everything ahead of the last backslash in the string to go up one level
-    # if ($pathIn -match '.*(?=\\{1}[^\\]*$)') {
-    #     $pathOut = $Matches[0]
-    #     $pathOut
-    #     return
-    # #Return the drive letter without the colon if we try to go above the drive root
-    # #and wherever called this interpret that information
-    # } elseif ($pathIn -match '^[A-Z]:$') {
-    #     $pathOut = $pathIn[0]
-    #     $pathOut
-    #     return
-    # } else {
-    #     throw "Can't parse windows directory"
-    # }
 }
 
 function Cleave-FileName {
-    #Returns file name after the last slash in a *nix or Windows style path
+    #Returns file name after the last slash in either a *nix or Windows style path
 
     param (
+        [Parameter(Mandatory = $true)]
         [string]$pathIn
     )
     if ($pathIn -match '[^\\/]*$') {
@@ -1355,7 +1381,7 @@ function Gen-FileDetails {
 }
 
 function Show-FileDetails {
-    #Displays the data in $script:FileInfo
+    #Displays the data in $script:FileInfo above a menu with restore options
 
     Show-Menu -HeaderLines 6 -SlashForBack -MenuLines @(
         $script:FileDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore"
@@ -1390,6 +1416,7 @@ function Format-FolderDetails {
     [int64]$bytes = 0
     $modTime = [datetime]::MinValue
 
+    #Add up number of files, folders, and most recent modified date
     foreach ($item in $script:FolderDataRecursiveRaw) {
         if ($item.type -eq "dir") { $dirs++ }
         if ($item.type -eq "file") {
@@ -1414,7 +1441,7 @@ function Format-FolderDetails {
 }
 
 function Show-FolderDetails {
-    #Displays the data in $script:FolderDetailsFormatted
+    #Displays the data in $script:FolderDetailsFormatted above a menu with restore options
 
     Show-Menu -HeaderLines 6 -SlashForBack -MenuLines @(
         [string[]]("$(Convert-NixPathToWin $script:FolderPath)","") + $script:FolderDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore"
@@ -1422,6 +1449,8 @@ function Show-FolderDetails {
 }
 
 function Confirm-ExitRestore {
+    #Displays menu to double check if the user wants to exit a snapshot while items are queued for restore
+
     if ($script:RestoreFromQueue.Count -gt 0) {
         Show-Menu -HeaderLines 2 -MenuLines @(
             "There are still items queued to for restore!"
@@ -1459,32 +1488,32 @@ function Restore-Item {
     #Construct command line argument
 
     #Base options
+    #restic.exe -r B:\Repo --insecure-no-password restore
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " restore"
 
     #All four different from/to combinations
     if ($folder -eq $true -and $new -eq $true) {
-        #restic.exe -r B:\Repo --insecure-no-password restore "abcdef:/C/Dir1/Dir2/" --target "C:\Dir3\Dir4\"
+        #"abcdef:/C/Dir1/Dir2/" --target "C:\Dir3\Dir4\"
         $c += " $(Quote-Path("$script:SnapID" + ":" + "$($script:RestoreFromSingle.path)" + "/"))" + " --target $(Quote-Path("$script:RestoreTo" + "\" + "$(Cleave-FileName($script:RestoreFromSingle.path))"))" + " -vv"
     }
     if ($folder -eq $true -and $original -eq $true) {
-        #restic.exe -r B:\Repo --insecure-no-password restore "abcdef:/C/Dir1/Dir2/" --target "C:\Dir1\Dir2"
+        #abcdef:/C/Dir1/Dir2/" --target "C:\Dir1\Dir2"
         $c += " $(Quote-Path("$script:SnapID" + ":" + "$($script:RestoreFromSingle.path)" + "/"))" + " --target $(Quote-Path($(Convert-NixPathToWin($($script:RestoreFromSingle).path))))" + " -vv"
     }
     if ($file -eq $true -and $original -eq $true) {
-        #restic.exe -r B:\Repo --insecure-no-password restore "abcdef:/C/Dir1/Dir2/" --include "file.exe" --target "C:\Dir1\Dir2\"
+        #"abcdef:/C/Dir1/Dir2/" --include "file.exe" --target "C:\Dir1\Dir2\"
         $c += " $(Quote-Path("$script:SnapID" + ":" + "$(Pop-NixDirectory($($script:RestoreFromSingle.path)))" + "/"))" + " --include /$(Quote-Path($(Cleave-FileName($($script:RestoreFromSingle.path)))))" + " --target $(Quote-Path($(Convert-NixPathToWin($(Pop-NixDirectory($script:RestoreFromSingle.path))))))\" + " -vv"
     }
     if ($file -eq $true -and $new -eq $true) {
-        #restic.exe -r B:\Repo --insecure-no-password restore "abcdef:/C/Dir1/Dir2/" --include "file.exe" --target "C:\Dir3\Dir4\"
+        #"abcdef:/C/Dir1/Dir2/" --include "file.exe" --target "C:\Dir3\Dir4\"
         $c += " $(Quote-Path("$script:SnapID" + ":" + "$(Pop-NixDirectory($($script:RestoreFromSingle.path)))" + "/"))" + " --include /$(Quote-Path($(Cleave-FileName($($script:RestoreFromSingle.path)))))" + " --target $(Quote-Path("$script:RestoreTo"))\" + " -vv"
     }
 
     #Overwrite, delete, and dry run options
     switch ($script:RestoreOverwriteOption) {
-        #"All" {$c += " --overwrite always"}
-        "Different" { } #Noop
-        "Newer" {$c += " --overwrite if-newer"}
-        "Never" {$c += " --overwrite never"}
+        ([RestoreOverwriteOption]::Different) { } #Noop
+        ([RestoreOverwriteOption]::Newer) {$c += " --overwrite if-newer"}
+        ([RestoreOverwriteOption]::Never) {$c += " --overwrite never"}
     }
     if ($script:RestoreDeleteOption) {$c += " --delete"}
     if ($script:RestoreDryRunOption -eq $true) {$c += " --dry-run"}
@@ -1507,22 +1536,25 @@ function Restore-Queue {
     [CmdletBinding(DefaultParameterSetName='empty')]
     param (
         [Parameter(ParameterSetName = "IndividualDryRuns")]
-        [boolean]$IndividualDryRuns = $false,
+        [switch]$IndividualDryRuns,
         [Parameter(ParameterSetName = "GroupDryRun")]
-        [boolean]$GroupDryRun = $false
+        [switch]$GroupDryRun
     )
 
     #Confirm that state variable match with parameters
-    if ($script:RestoreDryRunOption -eq $true -and $IndividualDryRuns -eq $false -and $GroupDryRun -eq $false) {
+    if ($script:RestoreDryRunOption -eq $true -and $($IndividualDryRuns).IsPresent -eq $false -and $($GroupDryRun).IsPresent -eq $false) {
         Throw "Invalid state.  Dry run parameters cannot be specified with out matching `$RestoreDryRunOption."
     }
 
     cls
+    #Clone $RestoreFromQueue array list
+    #Iterate through the clone and remove successfully restored items from the original
+    #NOT on a dry run
     $items = $script:RestoreFromQueue.Clone()
     foreach ($item in $items) {
         $script:RestoreFromSingle = $item
         #Dry run with individual menus if asked for
-        if ($IndividualDryRuns -eq $true) {
+        if ($($IndividualDryRuns).IsPresent -eq $true) {
             Restore-SingleItemDryRunMenu
             #$script:RestoreDryRunOption will be flipped if user approves
             if ($script:RestoreDryRunOption -eq $false) {
@@ -1533,23 +1565,23 @@ function Restore-Queue {
             }
         }
         #Just run the restore command if in group approval or no dry run mode
-        if ($GroupDryRun -eq $true -or $script:RestoreDryRunOption -eq $false -and $IndividualDryRuns -eq $false) {
+        if ($($GroupDryRun).IsPresent -eq $true -or $script:RestoreDryRunOption -eq $false -and $($IndividualDryRuns).IsPresent -eq $false) {
             Restore-Item
         }
         #Remove item from original queue list if real restore was done and is successful
-        if ($script:LASTEXITCODE -eq 0 -and ($IndividualDryRuns -eq $true -or $script:RestoreDryRunOption -eq $false)) {
+        if ($script:LASTEXITCODE -eq 0 -and ($($IndividualDryRuns).IsPresent -eq $true -or $script:RestoreDryRunOption -eq $false)) {
             $script:RestoreFromQueue.Remove($item)
         }
         #Append to array of log file names in group mode
-        if ($GroupDryRun -eq $true) {
+        if ($($GroupDryRun).IsPresent -eq $true) {
             $script:QueueRestoreLogPaths += $script:LastRestoreLog
         }
         #Reset $RestoreDryRunOption for next item in individual mode
-        if ($IndividualDryRuns) {$script:RestoreDryRunOption = $true}
+        if ($($IndividualDryRuns).IsPresent) {$script:RestoreDryRunOption = $true}
     }
 
-    #check success if real restores were done
-    if ($GroupDryRun -eq $false) {
+    #Check and display success/failure if real restores were done
+    if ($($GroupDryRun).IsPresent -eq $false) {
         if ($script:RestoreFromQueue.count -eq 0) {
             Write-Host ""
             Write-Host "All items restored successfully!"
@@ -1600,6 +1632,7 @@ function Write-RestoreLog {
     #outputs log for restore operations and differentiates between real restores and dry runs
 
     param (
+        [Parameter(Mandatory = $true)]
         [string[]]$lines
     )
 
@@ -1618,7 +1651,7 @@ function Open-RestoreLog {
     param (
         [string]$log = $script:LastRestoreLog
     )
-    cmd /c "start `"`" $(Quote-Path("$pwd" + "\Logs\" + "$log"))"
+    cmd /c "start `"`" $(Quote-Path($script:Options.LogPath + $log))"
 }
 
 function Restore-SingleItemDryRunMenu {
@@ -1664,6 +1697,7 @@ function Validate-WinPath {
     #Checks for being a valid absolute path by default.  Switch to check as a relative path instead
 
     param (
+        [Parameter(Mandatory = $true)]
         [string]$pathIn,
         [switch]$Relative
     )
@@ -1705,6 +1739,7 @@ function Validate-WinPath {
 
 function Read-WinPath {
     #Input and attempt to validate Windows path
+    #Returns empty string after retries are used up
 
     $i = 0
     while ($i -lt $script:options.Retries) {
@@ -1732,6 +1767,7 @@ function Queue-ForRestore {
     #Adds item to the restore queue or tells you it's already been added
 
     param (
+        [Parameter(Mandatory = $true)]
         [PSObject]$item
     )
 
@@ -1847,6 +1883,8 @@ function Check-RestoreFromQueueEmpty {
 }
 
 function Warn-RestoreFromQueueEmpty {
+    #Just displays a message that the queue is empty
+
     cls
     Write-Host "Restore queue is empty!"
     Pause
@@ -1946,9 +1984,13 @@ function Create-Repo {
 }
 
 function Validate-Decimal {
-    #Checks that input can be parsed as a decimal
+    #Checks that input can be parsed as a decimal - returns true or false
 
-    param ($number)
+    param (
+        [Parameter(Mandatory = $true)]
+        $number
+    )
+
     try {
         [decimal]::Parse($number)|Out-Null
     } catch {
@@ -1961,7 +2003,7 @@ function Validate-Decimal {
 
 function Validate-Percentage {
     #Checks if a number can be interpreted as a percentage in either a 0-1 scale or a 0-100 scale
-    #Excludes 0% and 100%
+    #Returns true or false, excludes 0% and 100%
 
     param (
         [Parameter(Mandatory = $true)]
@@ -2083,6 +2125,7 @@ function Update-Ini {
 
 function Pin-ConformationMenu {
     #Takes a path and ask for conformation before (Un)Pinning it
+
     param (
         [Parameter(Mandatory = $true)]
         [string]$Path,
@@ -2115,9 +2158,12 @@ function Pin-ConformationMenu {
 
 function Pin-Repository {
     #Appends repository pinning line to ini
-    #Reloads ini to update settings and confirm
+    #Reloads ini to update settings and confirm to the user it was written
 
-    param ([string]$path)
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$path
+    )
 
     Update-Ini -AppendLine ("pin=" + "$path")
     if ($path -in $script:Pinned) {
@@ -2129,6 +2175,9 @@ function Pin-Repository {
 }
 
 function Unpin-Repository {
+    #Unpins a repository by rewriting the ini file without its line
+    #Reloads ini to update settings and confirm to the user it was removed
+
     param (
         [Parameter(Mandatory = $true)]
         [string]$Path
@@ -2176,34 +2225,34 @@ function Ask-RestoreOptions {
     )
     switch ($MenuChoice) {
         1 {
-            $script:RestoreOverwriteOption = "Different"
+            $script:RestoreOverwriteOption = [RestoreOverwriteOption]::Different
             $script:RestoreDeleteOption = $false
         }
         2 {
-            $script:RestoreOverwriteOption = "Different"
+            $script:RestoreOverwriteOption = [RestoreOverwriteOption]::Different
             $script:RestoreDeleteOption = $true
         }
         3 {
-            $script:RestoreOverwriteOption = "Newer"
+            $script:RestoreOverwriteOption = [RestoreOverwriteOption]::Newer
             $script:RestoreDeleteOption = $false
         }
         4 {
-            $script:RestoreOverwriteOption = "Newer"
+            $script:RestoreOverwriteOption = [RestoreOverwriteOption]::Newer
             $script:RestoreDeleteOption = $true
         }
         5 {
-            $script:RestoreOverwriteOption = "Never"
+            $script:RestoreOverwriteOption = [RestoreOverwriteOption]::Never
             $script:RestoreDeleteOption = $false
         }
         6 {
-            $script:RestoreOverwriteOption = "Never"
+            $script:RestoreOverwriteOption = [RestoreOverwriteOption]::Never
             $script:RestoreDeleteOption = $true
         }
     }
 }
 
 function Ask-DryRun {
-    #Menu to ask and set if restore operations should be proceeded by a dry run
+    #Menu to ask and set if restore operations should be preceded by a dry run
 
     Show-Menu -HeaderLines 2 -MenuLines @(
             "Perform a dry run first?"
@@ -2238,25 +2287,25 @@ function Ask-DryRunQueueMode {
 }
 
 function Get-RestoreOptionsWarningString {
-    #Returns a sting to warn about overwrites and deletes during restore operation base on set options
+    #Returns a sting to warn about overwrites and deletes during restore operation base on currently set options
 
-    if ($script:RestoreOverwriteOption -eq "Different" -and $script:RestoreDeleteOption -eq $false) {
+    if ($script:RestoreOverwriteOption -eq [RestoreOverwriteOption]::Different -and $script:RestoreDeleteOption -eq $false) {
         "OVERWRITE existing files in destination if the snapshot's version is DIFFERENT, leave files in destination that are not in snapshot (Default)"
-    } elseif ($script:RestoreOverwriteOption -eq "Different" -and $script:RestoreDeleteOption -eq $true) {
+    } elseif ($script:RestoreOverwriteOption -eq [RestoreOverwriteOption]::Different -and $script:RestoreDeleteOption -eq $true) {
         "OVERWRITE existing files in destination if the snapshot's version is DIFFERENT, DELETE files in destination that are not in snapshot"
-    } elseif ($script:RestoreOverwriteOption -eq "Newer" -and $script:RestoreDeleteOption -eq $false) {
+    } elseif ($script:RestoreOverwriteOption -eq [RestoreOverwriteOption]::Newer -and $script:RestoreDeleteOption -eq $false) {
         "OVERWRITE existing files in destination if the snapshot's version is NEWER, leave files in destination that are not in snapshot"
-    } elseif ($script:RestoreOverwriteOption -eq "Newer" -and $script:RestoreDeleteOption -eq $true) {
+    } elseif ($script:RestoreOverwriteOption -eq [RestoreOverwriteOption]::Newer -and $script:RestoreDeleteOption -eq $true) {
         "OVERWRITE existing files in destination if the snapshot's version is NEWER, DELETE files in destination that are not in snapshot"
-    } elseif ($script:RestoreOverwriteOption -eq "Never" -and $script:RestoreDeleteOption -eq $false) {
+    } elseif ($script:RestoreOverwriteOption -eq [RestoreOverwriteOption]::Never -and $script:RestoreDeleteOption -eq $false) {
         "Do NOT OVERWRITE existing copies of files in destination with those in snapshot, leave files in destination that are not in snapshot"
-    } elseif ($script:RestoreOverwriteOption -eq "Never" -and $script:RestoreDeleteOption -eq $true) {
+    } elseif ($script:RestoreOverwriteOption -eq [RestoreOverwriteOption]::Never -and $script:RestoreDeleteOption -eq $true) {
         "Do NOT OVERWRITE existing copies of files in destination with those in snapshot, DELETE files in destination that are not in snapshot"
     }
 }
 
 function Get-RestoreDryRunWarningString {
-    #Returns sting to warn about including a dry run of a restore operation or not based on set options
+    #Returns sting to warn about including a dry run of a restore operation or not based on currently set options
 
     if ($script:RestoreDryRunOption -eq $false) {
         "WITHOUT a DRY RUN to preview results"
@@ -2278,8 +2327,9 @@ function Get-RestoreDryRunWarningString {
 ###################################################################################################
 #Inside main loop each menu has a menu address and a matching while loop
 #Jumping between menus is controlled by changing the menu address variable and breaking the
-##current menu while loop
-#Functions are called in order according to menu logic and generally modify script scope variables
+####current menu while loop
+#Functions concerning the currently selected repository, snapshot, and restoring items generally
+#### modify script scope variables and do not return a value
 ###################################################################################################
 #Addresses
 ###################################################################################################
@@ -2366,8 +2416,8 @@ while ($true) {
     }
 
     :ChoosePinnedRepositoryMenu while ($MenuAddress -eq 1100) {
+        #Go back up a level if there's nothing to show
         if ($Pinned.count -lt 1) {
-            #Go back up a level if there's nothing to show
             Write-host "No pinned repos found"
             write-host ""
             pause
@@ -2380,15 +2430,17 @@ while ($true) {
             "$($Pinned.Count) pinned repositories found"
             ""
         )
+
         Show-Menu -HeaderLines 2 -SlashForBack -MenuLines ($PinnedRepoHeader + $Pinned)
         if ($MenuChoice -in "/") {
             #Go back
             $MenuAddress = 1000
             break ChoosePinnedRepositoryMenu
         }
+
         #Try and open the repo
         Open-Repo $Pinned[($MenuChoice - 1)]
-        if ($RepoUnlocked -eq $true) {
+        if ($RepoOpened -eq $true) {
             $MenuAddress = 1700 #RepositoryOperationMenu
         #Ask to remove pins if they have failed to open
         } else {
@@ -2405,7 +2457,7 @@ while ($true) {
 
     :PinRepositoryMenu while ($MenuAddress -eq 1200) {
         $i = 0
-        :PinRepositoryMenuRetry while ($i -lt $Options.Retries -and $RepoUnlocked -eq $false) {
+        :PinRepositoryMenuRetry while ($i -lt $Options.Retries -and $RepoOpened -eq $false) {
             cls
             Write-host "Please enter the path to the repository you would like to pin:"
             $p = Read-Host
@@ -2446,7 +2498,7 @@ while ($true) {
                 Open-Repo $p
                 $i++
             }
-            if ($MenuChoice -eq 2 -or $RepoUnlocked -eq $true) {
+            if ($MenuChoice -eq 2 -or $RepoOpened -eq $true) {
                 Pin-Repository $p
                 break PinRepositoryMenuRetry
             }
@@ -2488,14 +2540,14 @@ while ($true) {
 
     :EnterRepositoryManuallyMenu while ($MenuAddress -eq 1400) {
         $i = 0
-        while ($i -lt $Options.Retries -and $RepoUnlocked -eq $false) {
+        while ($i -lt $Options.Retries -and $RepoOpened -eq $false) {
             cls
             Write-host "Please enter the path to the repository:"
             $p = Read-Host
             Open-Repo $p
             $i++
         }
-        if ($RepoUnlocked -eq $true) {
+        if ($RepoOpened -eq $true) {
             $MenuAddress = 1700 #RepositoryOperationMenu
         } else {
             $MenuAddress = 1000 #Back to top repo menu
@@ -2508,7 +2560,7 @@ while ($true) {
     }
 
     :RepositoryOperationMenu while ($MenuAddress -eq 1700) {
-        #Check if repo path is already pinned and add option to do reverse
+        #Check if repo path is already pinned and add option to do the reverse
         $AlreadyPinned = $null
         $PinOrUnpin = ""
         foreach ($repo in $Pinned) {
@@ -2549,11 +2601,13 @@ while ($true) {
             3 {$MenuAddress = 1710} #SnapshotSelectionMenu
             4 {
                 if ($AlreadyPinned -eq $true) {
+                #Confirm unpinning and then go back up a level
                     Pin-ConformationMenu -Path $RepoPath -Unpin
                     if ($RepoPath -notin $Pinned) {
                         $MenuAddress = 1000 #TopRepositoryMenu
                         break RepositoryOperationMenu
                     }
+                #Or just confirm and pin
                 } else {
                     Pin-ConformationMenu -Path $RepoPath -Pin
                 }
@@ -2650,6 +2704,7 @@ while ($true) {
             "Specify a percentage of total repository data to check at random"
             "Specify a fixed amount of repository data to check at random"
         )
+        #Build command line arguments in $RepoCheckCommand
         switch ($MenuChoice) {
             1 {
                 $RepoCheckCommand = "--read-data"
@@ -2726,9 +2781,16 @@ while ($true) {
     }
 
     :EditSnapshotTagsMenu while ($MenuAddress -eq 1760) {
-        Show-Menu -HeaderLines 18 -SlashForBack -MenuLines @(
-            [string[]]("Edit tags for the following snapshot","") + $SnapshotStatsFormatted + "" + "Add a tag" + "Remove a tag" + "Clear all tags"
-        )
+        [string[]]$m = @()
+        $m += "Edit tags for the following snapshot"
+        $m += ""
+        $m += $SnapshotStatsFormatted
+        $m += ""
+        $m += "Add a tag"
+        $m += "Remove a tag"
+        $m += "Clear all tags"
+
+        Show-Menu -HeaderLines 18 -SlashForBack -MenuLines $m
         switch ($MenuChoice) {
             1 {Add-SnapshotTag}
             2 {Remove-SnapshotTag}
@@ -2738,7 +2800,7 @@ while ($true) {
                 break EditSnapshotTagsMenu
             }
         }
-        #Find the new ID and display the updated data
+        #Find the new ID and display the updated data after changes have been made
         Find-ChangedSnapshot
         Get-SnapshotStats
         Format-SnapshotStats
@@ -2776,7 +2838,6 @@ while ($true) {
         #Get root path when initially entering menu, skip if circling back with $KeepPage
         if ($KeepPage -eq $false) {Check-RootFolderPath}
         #Cycle though menu
-        #Changes to what is displayed all occur within the loops
         #Break :KeepFolderData after generating data about a new choice so :RefreshFolderData will resort it
         :RefreshFolderData while ($true) {
                 Sort-FolderData
@@ -2797,7 +2858,7 @@ while ($true) {
                     } elseif ($MenuChoice -eq 2) {
                         $MenuAddress = 1840 #RestoreQueueDestinationMenu
                         $KeepPage = $true
-                    #go back to last page if not exiting or restoring
+                    #Go back to last page if not exiting or restoring
                     } elseif ($MenuChoice -eq 3) {
                         $KeepPage = $true
                     }
@@ -2854,7 +2915,7 @@ while ($true) {
                 #Choosing a new item
                 ####################
                 } elseif ($MenuChoice -is [int]) {
-                    $MenuChoice = $MenuChoice  -1 #array offset
+                    $MenuChoice = $MenuChoice - 1 #array offset
                     $BrowseChoice = $FolderDirsAndFiles[$MenuChoice]
                     #Drill into chosen directory
                     if ($BrowseChoice.type -eq "dir") {
@@ -2895,13 +2956,10 @@ while ($true) {
         #Resets options for quick restore and gives one last chance change your mind if option is set
 
         $RestoreTo = ""
-        $RestoreOverwriteOption = "Different"
+        $RestoreOverwriteOption = [RestoreOverwriteOption]::Different
         $RestoreDeleteOption = $false
         $RestoreDryRunOption = $false
 
-        # if ($Options.QuickRestoreConfirm -eq 1) {
-        #     Restore-Item
-        #     pause
         if ($Options.QuickRestoreConfirm -eq 1) {
             Show-Menu -HeaderLines 4 -MenuLines @(
                 "Restore $($RestoreFromSingle.name) to original location?"
@@ -2933,13 +2991,13 @@ while ($true) {
         #Set $RestoreTo and move on to next menu
         switch ($MenuChoice) {
             1 {
-                $RestoreTo = ""
+                $RestoreTo = "" #Empty string is interpreted as the original location
                 $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
                 break RestoreSingleItemDestinationMenu
             }
             2 {
                 $p = Browse-RestoreToPath
-                if ($p -eq $null) {
+                if ($p -eq $null) { #$null if Browse-RestoreToPath is exited
                     break RestoreSingleItemDestinationMenu
                 } else {
                     $RestoreTo = $p
@@ -2949,7 +3007,7 @@ while ($true) {
             }
             3 {
                 $p = Read-WinPath
-                if ($p -ne "") {
+                if ($p -ne "") { #Read-WinPath returns an empty string after retries are used up.
                     $RestoreTo = $p
                     $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
                     break RestoreSingleItemDestinationMenu
@@ -2963,6 +3021,7 @@ while ($true) {
     }
 
     :RestoreSingleItemOptionsMenu while ($MenuAddress -eq 1820) {
+        #Sets options and moves on
         Ask-RestoreOptions
         Ask-DryRun
         $MenuAddress = 1830 #ConfirmRestoreSingleItemMenu
@@ -2980,7 +3039,7 @@ while ($true) {
         } else {
             $m += "Restore $($RestoreFromSingle.name) to $($RestoreTo)?"
         }
-        $m += "$(Get-RestoreOptionsWarningString)"
+        $m += "$(Get-RestoreOptionsWarningString)" #Display these setting again for the user
         $m += "$(Get-RestoreDryRunWarningString)"
         $m += ""
         $m += "Yes"
@@ -3020,7 +3079,7 @@ while ($true) {
         $m += "$($script:RestoreFromQueue.count) items selected"
         $l = 2
         #Check if items have overlapping paths that may overwrite each other and add warning if needed
-        if (Check-RestoreFromQueueConflict -eq $true) {
+        if (Check-RestoreFromQueueConflict) {
             $m += "WARNING: Some items chosen for restore have overlapping paths.  Continuing may lead to unexpected results."
             $l++
         }
@@ -3035,13 +3094,13 @@ while ($true) {
 
         switch ($MenuChoice) {
             1 {
-                $RestoreTo = ""
+                $RestoreTo = "" #Empty string is interpreted as original location
                 $MenuAddress = 1850 #RestoreQueueOptionsMenu
                 break RestoreQueueDestinationMenu
             }
             2 {
                 $p = Browse-RestoreToPath
-                if ($p -eq $null) {
+                if ($p -eq $null) { #Browse-RestoreToPath returns $null if exited
                     break RestoreQueueDestinationMenu
                 } else {
                     $RestoreTo = $p
@@ -3051,7 +3110,7 @@ while ($true) {
             }
             3 {
                 $p = Read-WinPath
-                if ($p -ne "") {
+                if ($p -ne "") { #Read-WinPath returns $null after running out of retries
                     $RestoreTo = $p
                     $MenuAddress = 1850 #RestoreQueueOptionsMenu
                     break RestoreQueueDestinationMenu
@@ -3073,6 +3132,8 @@ while ($true) {
     }
 
     :RestoreQueueOptionsMenu while ($MenuAddress -eq 1850) {
+        #Collect options and move on
+
         Ask-RestoreOptions
         Ask-DryRun
         if ($RestoreDryRunOption -eq $true) {
@@ -3083,7 +3144,7 @@ while ($true) {
     }
 
     :ConfirmRestoreQueueMenu while ($MenuAddress -eq 1860) {
-        #Displays restore option and confirms operation with user before running restore
+        #Displays restore options and confirms operation with user before running restore
 
         #Build menu array
         [string[]]$m = @()
@@ -3092,7 +3153,7 @@ while ($true) {
         } else {
             $m += "Restore $($script:RestoreFromQueue.count) items to $($RestoreTo)?"
         }
-        $m += "$(Get-RestoreOptionsWarningString)"
+        $m += "$(Get-RestoreOptionsWarningString)" #Display these setting again for the user
         $m += "$(Get-RestoreDryRunWarningString)"
         $m += ""
         $m += "Yes"
@@ -3108,14 +3169,14 @@ while ($true) {
         #Dry run all at once, do it again for real if approved
         } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Group") {
             $script:QueueRestoreLogPaths = @()
-            Restore-Queue -GroupDryRun $true
+            Restore-Queue -GroupDryRun
             Confirm-DryRunQueueGroup
             if ($RestoreDryRunOption -eq $false) {
                 Restore-Queue
             }
         #Go through each item in queue individually with the single item functions.
         } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Individual") {
-            Restore-Queue -IndividualDryRuns $true
+            Restore-Queue -IndividualDryRuns
         }
         $MenuAddress = 1800 #BrowseAndRestoreMenu
         break ConfirmRestoreQueueMenu
