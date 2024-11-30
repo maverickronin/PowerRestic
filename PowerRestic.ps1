@@ -39,7 +39,7 @@ function Clear-Variables {
     $Script:SnapshotStatsRaw = $null #Object Restic's nested json snapshot info is put into
     [string[]]$script:SnapshotStatsFormatted = @() #Array of the useful data in formatted strings
     $script:FolderPath = $null #Current path being browsed in snapshot
-    [array]$script:FolderData = $null #Object with converted data from Restic's json
+    [array]$script:FolderData = $null #Object with converted data from Restic's json fo a single folder in a snapshot
     [array]$script:FolderDirs = @() #Directories extracted from $FolderData and sorted
     [array]$script:FolderFiles = @() #Files extracted from $FolderData and sorted
     [array]$script:FolderDirsAndFiles = @() #Combination of the above
@@ -1201,17 +1201,27 @@ function New-WinHostFolder {
 }
 
 function Convert-WinPathToNix {
-    #Converts absolute, drive letter anchored windows path to *nix style /<Drive>/<Folder>
+    #By default, converts absolute, drive letter anchored windows path to *nix style /<Drive>/<Folder>/
+    #Relative switch to just flip slashes
     param (
         [Parameter(Mandatory = $true)]
-        [string]$PathIn
+        [string]$PathIn,
+        [switch]$Relative
     )
 
-    $PathOut = "\" + $PathIn[0] + $PathIn.Substring(2)
-    $PathOut = $PathOut.Replace("\","/")
-    if ($PathOut[-1] -ne "/") {$PathOut += "/"}
-    $PathOut
-    return
+    if ($PathIn -match '^[A-Z]:\\' -and $($Relative).IsPresent -eq $false) {
+        $PathOut = "\" + $PathIn[0] + $PathIn.Substring(2)
+        $PathOut = $PathOut.Replace("\","/")
+        if ($PathOut[-1] -ne "/") {$PathOut += "/"}
+        $PathOut
+        return
+    } elseif ($PathIn -notmatch '^[A-Z]:\\' -and $($Relative).IsPresent -eq $true) {
+        $PathOut = $PathIn.Replace("\","/")
+        $PathOut
+        return
+    } else {
+        throw "Could not parse Windows directory!"
+    }
 }
 
 function Convert-NixPathToWin {
@@ -1693,32 +1703,56 @@ function Confirm-DryRunQueueGroup {
 
 function Validate-WinPath {
     #Some simple checks to try and make sure string input is a valid windows path
-    #returns $false or an array of $true and a fixed path because this will fix extra whitespace and trailing dots
-    #Checks for being a valid absolute path by default.  Switch to check as a relative path instead
+    #returns $false or an array of $true and a fixed path because this will fix typos like
+    #extra whitespace, trailing dots, and remove quote for the user since they are not needed
+    #Checks for being a valid absolute path by default.  Switches to check as a relative path
+    #or as a valid substring of a path to use as a search term
 
     param (
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$pathIn,
-        [switch]$Relative
+        [switch]$Relative,
+        [switch]$Search
     )
 
     $illegalChars = @("<",">",":","`"","/","|","?","*")
-    if ($pathIn -in "",$null) {
-        $false
-        return
-    }
-    #Trim whitespace and quotes, trailing dots are illegal - Will return this if nothing else is wrong
-    $pathIn = ($pathIn.Trim()).Trim(".","`"")
 
-    #Check it starts with a proper drive letter prompt
-    if (($pathIn -notmatch '^[a-z,A-Z]{1}:\\') -and -not($Relative)) {
+    #False for empty, #null, and all whitespace
+    if ($pathIn -in "",$null -or $pathIn -match '^\s*$') {
         $false
         return
     }
 
-    #Check for illegal chars and that there are not two backslashes in a row
+    #Trim typos and fixable errors - return fix string if nothing else is wrong
+    #Trim whitespace, trailing dots are illegal
+    #Trim quotes to not bug the user even though they are not needed
+    if(-not($($Search).IsPresent)) {
+        $pathIn = ($pathIn.Trim()).Trim(".","`"")
+    #For a search term only trim quotes as they are not needed and always illegal
+    #Leading/trailing whitespace and dots can be meant as substrings of a legal path
+    } else {
+        $pathIn = $pathIn.Trim("`"")
+    }
+
+    #Absolute paths
+    if ($($Relative).IsPresent -eq $false -and $($Search).IsPresent -eq $false) {
+        #Must start with <X>:\ and be at least 3 chars
+        if ($pathIn -notmatch '^[a-z,A-Z]{1}:\\' -or $pathIn.Length -lt 3) {
+            $false
+            return
+        } else {
+            $relativeSegment = $pathIn.Substring(2)
+        }
+    #Relative paths and search strings
+    } else {
+        $relativeSegment = $pathIn
+    }
+
+    #Check past or not including an <X>:\ drive anchor for
+    #illegal chars and that there are not two backslashes in a row
     $lastArrayCharIsBackslash = $false
-    foreach ($char in ($pathIn.Substring(2).ToCharArray())) {
+    foreach ($char in $relativeSegment.ToCharArray()) {
         if ($char -in $illegalChars) {
             $false
             return
