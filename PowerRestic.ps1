@@ -141,7 +141,7 @@ function Make-Ini {
     "AutoOpenDryRunLog=1" | Out-File .\PowerRestic.ini -Append
     "QuickRestoreConfirm=1" | Out-File .\PowerRestic.ini -Append
 
-    Start-Sleep -s 3
+    Start-Sleep -s 1
 }
 
 function Check-Settings {
@@ -961,9 +961,9 @@ function Get-PruneCommand {
     $s = ""
     if ($script:Options.PruneMaxRepackSize -ne $null) {$s += " --max-repack-size $($script:Options.PruneMaxRepackSize)"}
     if ($script:Options.PruneMaxUnused -ne $null) {$s += " --max-unused $($script:Options.PruneMaxUnused)"}
-    if ($script:Options.PruneRepackCacheableOnly -ne $null) {$s += " --repack-cacheable-only"}
-    if ($script:Options.PruneRepackSmall -ne $null) {$s += " --repack-small"}
-    if ($script:Options.PruneRepackSmall -ne $null) {$s += " --repack-uncompressed"}
+    if ($script:Options.PruneRepackCacheableOnly -eq 1) {$s += " --repack-cacheable-only"}
+    if ($script:Options.PruneRepackSmall -eq 1) {$s += " --repack-small"}
+    if ($script:Options.PruneRepackUncompressed -eq 1) {$s += " --repack-uncompressed"}
 
     $s
     return
