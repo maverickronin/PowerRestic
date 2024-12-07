@@ -11,13 +11,13 @@ Just run `PowerRestic.ps1` and it will prompt you for a path to the restic execu
 There are a few other things to keep in mind too
 
 - Menu navigation inputs have been designed for the number pad.
-- Menu navigation commands are all displayed onscreen, so specifics will not not mentioned here.
+- Menu navigation commands are all displayed onscreen, so specifics will not be mentioned here.
 - You don't need to quote anything, even paths with spaces.
 - PowerRestic automatically converts restic's internal *nix path conventions back to DOS/Windows conventions for display and does the reverse with any user input so it can be treated as a fully "native" Windows application.
 
 ## Opening Repositories
 
-PowerRestic lets you pin a list pined repositories for frequent use, open a repository by path, or create a new repository.
+PowerRestic lets you pin a list of repositories for frequent use, open a repository by path, or create a new repository.
 
 ##### Open a pinned repository
 
@@ -63,7 +63,7 @@ Pin or unpin this repository according to its current status.
 
 ##### Prune old data
 
-Removes unreferenced data in repository with the `prune` command.  Exact setting may be specified in the .ini file.
+Removes unreferenced data in repository with the `prune` command.  Exact settings may be specified in the .ini file.
 
 ## Working with Snapshots
 
@@ -71,7 +71,7 @@ Selecting a snapshot will display its basic stats and provide these other option
 
 ##### Browse/restore from this snapshot
 
-Opens the snapshot at its top level and allows you to browse and restore its contents.
+Opens the snapshot's directory structure at its top level and allows you to browse and restore its contents.
 
 ##### Jump to path in this snapshot
 
@@ -83,7 +83,7 @@ Remove this individual snapshot's metadata from the repository with the `forget`
 
 ##### Edit this snapshot's tags
 
-Edit the snapshot's tags with options to add or remove individual tags or clear all tags.
+Edit the snapshot's tags with options to add or remove individual tags and to clear all tags.
 
 ## Restoring Data
 
@@ -112,7 +112,7 @@ Going forward, each user selected file or folder will be referred to as an "item
 
 ##### Quick Restore
 
-Skip the options menus and restore the item to the original location with the default settings of overwriting changed files, leaving extra files, and not performing a dry run first.  By default the conformation menu is still displayed.
+Skip the options menus and restore the item to the original location with the default settings of overwriting changed files, leaving extra files, and not performing a dry run first.  By default the conformation menu is still displayed but can be disabled.
 
 ##### Restore now
 
@@ -124,22 +124,22 @@ Add this item to a list which can be restored all at once later.  The menu for r
 
 Queued items must all be restored to their individual original locations or to a single common location.
 
-With a queue, dry runs can be performed in two different modes.  Each item's dry run may be done individually, in order, with a choice to for each item's restore operation or all dry runs may be done at once with a single choice to continue with all the queued restores or not.
+With a queue, dry runs can be performed in two different modes.  Each item's dry run may be done individually, in order, with a choice to for each item's restore operation or all dry runs may be done at once with a single choice to continue with all the queued restores or abort.
 
 ## Settings in the .ini File
 
-As long as you point it to the restic executable the script will make a basic ini file and run with defaults but you can change them here.
+As long as you point it to the restic executable when prompted, the script will make a basic ini file and run with defaults but you can change them here.
 
 It's just the usual `SETTING=VALUE` and order doesn't matter.  You don't need quotes here either.
 
 - ResticPath
     - The only thing it actually needs to run
 - DisplayLines
-    - Default: 50
+    - Default: 40
     - Number of options in a menu before it paginates
 - Retries
     - Default: 3
-    - Number of failures before an input prompt goes back to its parent menu
+    - Number of failures before an otherwise un-exitable input prompt goes back to its parent menu
 - AutoOpenDryRunLog
     - Default: 1
     - If dry run log files should automatically open in the default text editor after they finish - 0 or 1
@@ -147,15 +147,15 @@ It's just the usual `SETTING=VALUE` and order doesn't matter.  You don't need qu
     - Default: 1
     - Display a yes/no conformation before performing a quick restore - 0 or 1
 - LogPath
-    - Default: \Logs\
-    - Path restore and dry run logs are saved to.  Can be absolute or relative.
+    - Default: \<repository path\>\pr_data
+    - Path restore and dry run logs are saved to.  Can be changed to another absolute or relative path.
 - Pin
     - Default: null
     - Path to any repository you'd like to pin for quick access.  Repeat on multiple lines as many times as you need.
 
 ##### Repository Prune Settings
 
-These options will be passed to restic's prune command as set.  [Restic documentation here.](https://restic.readthedocs.io/en/stable/060_forget.html)
+These options will be passed to restic's prune command as set.  [Restic documentation here](https://restic.readthedocs.io/en/stable/060_forget.html) and from `restic help prune`
 
 - PruneMaxRepackSize
     - `--max-repack-size`

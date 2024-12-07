@@ -70,92 +70,44 @@ function Load-ini {
     [string[]] $script:Pinned = @()
     $script:Options = new-object PSobject
 
-    #Create basic settings file if none is found
-    if (!(test-path "PowerRestic.ini")) {
+    #Load ini if it exists
+    if (test-path "PowerRestic.ini") {
+        $RawIni = get-content "PowerRestic.ini"
+        #Ignore string parsing failures because everything is going to be better validated later
+        $ErrorActionPreference = 'SilentlyContinue'
+        foreach ($line in $RawIni) {
+            #Check for exe path
+            if ($line -like "ResticPath=*" -and (test-path $(Unquote-Path(($line.substring((($line.split("="))[0]).length + 1).trim()))))) {
+                $script:ResticPath = $(Unquote-Path($line.substring((($line.split("="))[0]).length + 1).trim()))
+            #Make an array of pinned repos
+            } elseif ($line -like "pin*=*") {
+                $script:Pinned += $line.substring((($line.split("="))[0]).length + 1).trim()
+            #Skip comments, section headers,blank lines, lines starting with a space
+            } elseif ($line[0] -in @(";","[",""," ") -or "=" -notin $line.ToCharArray()) {
+                #noop
+            #Throw everything else in a generic option object
+            } else {
+                #Skip second item if there are duplicate names
+                if ((($line.split("="))[0]).trim() -notin $script:Options.PSObject.Properties.Name) {
+                    $script:Options | Add-Member -NotePropertyName (($line.split("="))[0]).trim() $line.substring((($line.split("="))[0]).length + 1).trim() | out-null
+                }
+            }
+        }
+        $ErrorActionPreference = 'Stop'
+        #Validate settings
+        Check-Settings
+    } else {
+        #Setting validation sets defaults will be written to ini if it's missing
+        Check-Settings
         Make-Ini
     }
-
-    $RawIni = get-content "PowerRestic.ini"
-
-    foreach ($line in $RawIni) {
-        #Check for exe path
-        if ($line -like "ResticPath=*" -and (test-path ($line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()))) {
-            $Script:ResticPath = $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()
-        #Make an array of pinned repos
-        } elseif ($line -like "pin*=*") {
-            $script:Pinned += $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim()
-        #Skip comments, section headers,blank lines, lines starting with a space
-        } elseif ($line[0] -in @(";","[",""," ") -or "=" -notin $line.ToCharArray()) {
-            #noop
-        #Throw everything else in a generic option object
-        } else {
-            #Skip second item if there are duplicate names
-            if ((($line.split("="))[0]).trim() -notin $script:Options.PSObject.Properties.Name) {
-                $script:Options | Add-Member -NotePropertyName (($line.split("="))[0]).trim() $line.substring((($line.split("="))[0]).ToCharArray().count + 1).trim() | out-null
-            }
-        }
-    }
-
-    if ($script:options.debug -eq 1) {
-        write-host ""
-        foreach ($line in $RawIni) { write-host $line}
-        write-host ""
-    }
-
-    #Make sure settings won't cause an exception
-    Check-Settings
-}
-
-function Make-Ini {
-    #Look for restic exe in working directory and set defaults for required settings
-
-    $mResticPath = ""
-    cls
-    Write-Host "No settings found!"
-    Write-Host ""
-    if (Test-Path "restic.exe") {
-        Write-Host "Will use restic.exe found found in working directory."
-        $mResticPath = "restic.exe"
-    } else {
-        $i = 0
-        while ($mResticPath -eq "" -and $i -lt 3) {
-            Write-Host "Please enter the path to the restic executable:"
-            $s = Read-Host
-            if ((Test-Path "$s") -and $s.substring(($s.length - 4))) {
-                $mResticPath = $s
-                Write-Host "Restic executable exists"
-            } else {
-                Write-Host "Restic executable not found"
-                $i++
-            }
-        }
-    }
-    Write-Host ""
-    Write-Host "Writing default settings"
-    "[PowerRestic]" | Out-File .\PowerRestic.ini
-    "" | Out-File .\PowerRestic.ini -Append
-    "ResticPath=$($mResticPath)" | Out-File .\PowerRestic.ini -Append
-    "" | Out-File .\PowerRestic.ini -Append
-    "DisplayLines=50" | Out-File .\PowerRestic.ini -Append
-    "Retries=3" | Out-File .\PowerRestic.ini -Append
-    "AutoOpenDryRunLog=1" | Out-File .\PowerRestic.ini -Append
-    "QuickRestoreConfirm=1" | Out-File .\PowerRestic.ini -Append
-
-    Start-Sleep -s 1
+    #Always double check path exists and prompt for new path if needed
+    Find-ResticPath
 }
 
 function Check-Settings {
-    #Check that settings are valid and set defaults if not
+    #Set defaults for missing or invalid setting data in $script:Options
 
-    #Check working directory for restic.exe
-    if (Test-Path "restic.exe") {$script:ResticPath = "restic.exe"}
-    #exit if no exe was found
-    if ($script:ResticPath -eq $null -or -not(test-path $script:ResticPath)) {
-        Write-Host "Restic Executable not found."
-        exit 1
-    }
-
-    #Set defaults for missing of invalid setting data
     if ("Retries" -notin $script:Options.PSObject.Properties.Name) {
         $script:Options | Add-Member -NotePropertyName "Retries" 3  | out-null
     } else {
@@ -164,9 +116,9 @@ function Check-Settings {
     }
 
     if ("DisplayLines" -notin $script:Options.PSObject.Properties.Name) {
-        $script:Options | Add-Member -NotePropertyName "DisplayLines" 10  | out-null
+        $script:Options | Add-Member -NotePropertyName "DisplayLines" 40  | out-null
     } else {
-        try {[int]::Parse($script:Options.DisplayLines) | out-null} catch {$script:Options.DisplayLines = 10}
+        try {[int]::Parse($script:Options.DisplayLines) | out-null} catch {$script:Options.DisplayLines = 40}
         if ($script:Options.DisplayLines -lt 10) {$script:Options.DisplayLines = 10}
     }
 
@@ -176,18 +128,20 @@ function Check-Settings {
         if ($script:Options.AutoOpenDryRunLog -notin 0,1) {$script:Options.AutoOpenDryRunLog = 1}
     }
 
+    #Logs default to inside the repository being accessed
+    #Variable name stored as string literal so it can be expanded later with Invoke-Expression
     if ("LogPath" -notin $script:Options.PSObject.Properties.Name) {
-        $script:Options | Add-Member -NotePropertyName "LogPath" "Logs\"  | out-null
+        $script:Options | Add-Member -NotePropertyName "LogPath" "`"`$script:RepoPath\pr_data`""  | out-null
     } else {
         #Test if value is valid as either and absolute or relative path
         $a = Validate-WinPath ($script:Options.LogPath).trim("\")
         $r = Validate-WinPath ($script:Options.LogPath).trim("\") -Relative
         if ($a[0] -eq $true) {
-            $script:Options.LogPath = $($a[1]).trim("\") + "\"
+            $script:Options.LogPath = $($a[1]).trim("\")
         } elseif ($r[0] -eq $true) {
-            $script:Options.LogPath = $($r[1]).trim("\") + "\"
+            $script:Options.LogPath = $($r[1]).trim("\")
         } else {
-            $script:Options.LogPath = "Logs\"
+            $script:Options.LogPath = "`"`$script:RepoPath\pr_data`""
         }
     }
 
@@ -232,25 +186,117 @@ function Check-Settings {
     }
 }
 
-function Create-LogPath {
-    #Creates missing subfolders in $script:Options.LogPath
+function Make-Ini {
+    #Writes new ini file if needed after Check-Settings sets defaults
 
-    if (Test-Path $script:Options.LogPath) {return}
+    "[PowerRestic]" | Out-File .\PowerRestic.ini
+    "" | Out-File .\PowerRestic.ini -Append
+    foreach ($option in $script:options.PSObject.Properties) {
+        "$($option.name)=$($option.value)" | Out-File .\PowerRestic.ini -Append
+    }
+}
 
-    $folders = ($script:Options.LogPath).split("\")
-    $builtPath = ""
-    foreach ($folder in $folders) {
-        if ($folder -eq "") {continue}
-        if (test-path $folder) {
-            $builtPath += $folder + "\"
+function Find-ResticPath {
+    #Confirms there is an item at $script:ResticPath
+    #Replaces/adds path to ini file if wrong/missing
+
+    #Work around to keep null/empty string from breaking test-path and
+    #causing the whole if else block to be skipped
+    if ($script:ResticPath -in "",$null) {$script:ResticPath = "???"}
+
+    $resticFound = $false
+    if (test-path $(Unquote-Path($script:ResticPath))) {
+        $resticFound = $true
+    } else {
+        $i = 0
+        :findRestic while ($i -lt 3 -or $resticFound -eq $false) {
+            #Check working directory for restic.exe
+            if (Test-Path "restic.exe") {
+                $script:ResticPath = "restic.exe"
+                $resticFound = $true
+                break findRestic
+            }
+            #Ask user for path
+            if (Read-ResticPath) {
+                $resticFound = $true
+                break findRestic
+            } else {
+                write-host "Path not found!"
+                pause
+            }
+            $i++
+        }
+        #Update ini if initial path was bad
+        if ($resticFound -eq $true) {Update-ResticPath}
+    }
+}
+
+function Read-ResticPath {
+    #Prompts for restic path, tests path and returns true or false
+    #If true, set
+
+    cls
+    Write-Host "Please enter the path to the restic executable:"
+    $s = Read-Host
+    if (Test-Path $(Unquote-Path($s))) {
+        $script:ResticPath = $s
+        $true
+        return
+    } else {
+        $false
+        return
+    }
+}
+
+function Update-ResticPath {
+    #Add/replaces ResticPath= line in ini file
+
+    $iniIn = get-content "PowerRestic.ini"
+    [string[]]$iniMiddle = @()
+    [string[]]$iniOut = @()
+
+    #Strip blank line and/or old restic paths
+    foreach ($line in $iniIn) {
+        if ($line -like "ResticPath*=*" -or $line -eq "") {
+        continue
         } else {
-            mkdir ($builtPath + "\" + $folder) | out-null
-            $builtPath += $folder + "\"
+            $iniMiddle += $line
         }
     }
 
-    if (-not(Test-Path $script:Options.LogPath)) {
+    #Add header and new path
+    if (($iniMiddle[0]).Trim() -eq "[PowerRestic]") {
+        $iniOut += $iniMiddle[0]
+        $iniOut += ""
+        $iniOut += "ResticPath=$($script:ResticPath)"
+        $iniOut += ""
+        $iniOut += $iniMiddle[1..($iniMiddle.Count - 1)]
+    } else {
+        $iniOut += "[PowerRestic]"
+        $iniOut += ""
+        $iniOut += "ResticPath=$($script:ResticPath)"
+        $iniOut += ""
+        $iniOut+= $iniMiddle
+    }
 
+    Update-Ini -OverwriteLines $iniOut
+}
+
+function Create-LogPath {
+    #Creates missing subfolders in $script:Options.LogPath
+
+    if (Test-Path $(Unquote-Path($(invoke-expression $script:Options.LogPath)))) {return}
+
+    $folders = $(Unquote-Path(($(invoke-expression $script:Options.LogPath)))).split("\")
+    $builtPath = ""
+    foreach ($folder in $folders) {
+        if ($folder -eq "") {continue}
+        if (test-path ($builtPath + $folder)) {
+            $builtPath += $folder + "\"
+        } else {
+            New-Item -ItemType Directory ($builtPath + $folder) | out-null
+            $builtPath += $folder + "\"
+        }
     }
 }
 
@@ -494,11 +540,11 @@ function Read-MenuChoice {
     }
     #Browse/restore menus - non-scrolling and scrolling
     if ($($ScrollMenu).IsPresent -eq $false -and $($RestoreFolderMenu).IsPresent) {
-        write-host "`"-`" to go up a directory, `".`" for information about current directory,`"*`" to restore queued items, `"/`" to exit this menu"
+        write-host "`"-`" to go up a directory, `".`" for information about current directory,`"*`" to view or restore queued items, `"/`" to exit this menu"
         $AcceptableChoices += "-",".","/","*"
     }
     if ($($ScrollMenu).IsPresent -eq $true -and $($RestoreFolderMenu).IsPresent -eq $true) {
-        write-host "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`" for information about current directory, `"*`" to restore queued items, `"/`" to exit this menu"
+        write-host "Enter for next screen, `"+`" for last screen, `"-`" to go up a directory, `".`" for information about current directory, `"*`" to view restore or queued items, `"/`" to exit this menu"
         $AcceptableChoices += "+","-",".","/","*"
     }
     #Restore queue menu - non-scrolling and scrolling
@@ -538,7 +584,7 @@ function Read-MenuChoice {
 }
 
 function Format-Bytes  {
-    #Make bytes easily readable without drawing commas on your screen
+    #Make bytes easily readable without having to draw commas on your screen
     param (
         [Parameter(Mandatory = $true)]
         [int64]$bytes
@@ -562,7 +608,15 @@ function Open-Repo {
 
     cls
     #Confirm that folder even exists
-    if ($path -eq "" -or -not(Test-Path $path)) {
+    $p = Validate-WinPath $path
+    if ($p[0] -eq $true) {
+        $path = $p[1]
+    } else {
+        "$path is not a valid path.  Please try again"
+        pause
+        return
+    }
+    if ($path -eq "" -or -not(Test-Path $(Unquote-Path($path)))) {
         Write-Host "$path not found.  Please try again"
         pause
         return
@@ -708,14 +762,38 @@ function Quote-Path {
 
     param (
         [Parameter(Mandatory = $true)]
-        [string[]]$Path
+        [string]$Path
     )
-
+    #Just return input if it's already quoted
+    if ($path[0] -eq "`"" -and $path[-1] -eq "`"") {
+        $Path
+        return
+    }
+    #Add quotes if there is a space in it
     if (" " -in $Path.ToCharArray()) {
         $Path = "`"" + $Path + "`""
     }
     $Path
     return
+}
+
+function Unquote-Path {
+        #Unquotes quoted paths because Test-Path is super picky and just fails if a path passed
+        #via a variable is quoted
+
+        param (
+            [Parameter(Mandatory = $true)]
+            [string]$Path
+        )
+
+        if ($path[0] -eq "`"" -and $path[-1] -eq "`"") {
+            $path = $path.Substring(1,($path.length - 2))
+        }
+        if ($path[0] -eq "`'" -and $path[-1] -eq "`'") {
+            $path = $path.Substring(1,($path.length - 2))
+        }
+        $Path
+        return
 }
 
 function Gen-RepoStats {
@@ -1019,6 +1097,7 @@ function Jump-ToSnapshotPath {
             } else {
                 Write-Host "Folder $(Quote-Path($q[1])) does not exist in this snapshot!"
                 Pause
+                $i++
                 continue
             }
         }
@@ -1245,7 +1324,7 @@ function Convert-NixPathToWin {
         $PathOut = $PathIn.Substring(1) + ":"
     }
     #As above but if it prefixes a longer path
-    if ($($PathIn.ToCharArray().Count) -gt 2 -and $PathIn.substring(0,2) -match '^/[A-Z]') {
+    if ($($PathIn.Length) -gt 2 -and $PathIn.substring(0,2) -match '^/[A-Z]') {
         $PathOut += ($PathIn.Substring(1,1) + ":" + $PathIn.Substring(2))
     }
     #Reverse all the slashes to finish up
@@ -1400,8 +1479,9 @@ function Show-FileDetails {
 
 function Parse-ResticDate {
     #Parse and reformat restic's timestamps
+    param([string]$DateStringIn)
 
-    $datetime = [datetime]::Parse($args).ToString("yyyy-MM-dd dddd HH:mm-ss")
+    $datetime = [datetime]::Parse($DateStringIn).ToString("yyyy-MM-dd dddd HH:mm-ss")
     $datetime
     return
 }
@@ -1443,7 +1523,7 @@ function Format-FolderDetails {
     $FolderDetailsTable | Add-Member -NotePropertyName "Folders"  $dirs
     $FolderDetailsTable | Add-Member -NotePropertyName "Files"  $files
     $FolderDetailsTable | Add-Member -NotePropertyName "Data"  "$(Format-Bytes $bytes)"
-    #$FolderDetailsTable | Add-Member -NotePropertyName "Last Modified" $($modTime.ToString("yyyy-MM-dd dddd HH:mm-ss"))
+    $FolderDetailsTable | Add-Member -NotePropertyName "Last Modified" $($modTime.ToString("yyyy-MM-dd dddd HH:mm-ss"))
 
     #Convoluted way to get the list formatting
     #Split multiline string and filter out the empty lines it includes
@@ -1453,7 +1533,7 @@ function Format-FolderDetails {
 function Show-FolderDetails {
     #Displays the data in $script:FolderDetailsFormatted above a menu with restore options
 
-    Show-Menu -HeaderLines 6 -SlashForBack -MenuLines @(
+    Show-Menu -HeaderLines 7 -SlashForBack -MenuLines @(
         [string[]]("$(Convert-NixPathToWin $script:FolderPath)","") + $script:FolderDetailsFormatted + "" + "Queue for restore" + "Restore now" + "Quick Restore"
     )
 }
@@ -1639,29 +1719,33 @@ function Restore-ErrorMenu {
 }
 
 function Write-RestoreLog {
-    #outputs log for restore operations and differentiates between real restores and dry runs
+    #Outputs log for restore operations and differentiates between real restores and dry runs
+    #Default log path is to inside the repository restored from
+    #$script:Options.LogPath contains variable name $script:RepoPath as string literal which is expanded here, after the repository is chosen
 
     param (
         [Parameter(Mandatory = $true)]
-        [string[]]$lines
+        $lines
     )
 
-    if (-not(Test-Path $script:Options.LogPath)) {Create-LogPath}
+    if (-not(Test-Path $(Unquote-Path($(invoke-expression $script:Options.LogPath))))) {Create-LogPath}
     if ($script:RestoreDryRunOption -eq $false) {
         $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log.txt"
     } else {
         $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log_Dry_Run.txt"
     }
-    $lines | out-file "$($script:Options.LogPath)\$($script:LastRestoreLog)"
+    $lines | out-file "$(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\$($script:LastRestoreLog)"))"
 }
 
 function Open-RestoreLog {
     #Opens last restore log file in system default text editor or another fed as parameter
+    #Default log path is to inside the repository restored from
+    #$script:Options.LogPath contains variable name $script:RepoPath as string literal which is expanded here, after the repository is chosen
 
     param (
         [string]$log = $script:LastRestoreLog
     )
-    cmd /c "start `"`" $(Quote-Path($script:Options.LogPath + $log))"
+    cmd /c "start `"`" $(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\$($Log)"))"
 }
 
 function Restore-SingleItemDryRunMenu {
@@ -2708,7 +2792,10 @@ while ($true) {
                     $KeepPage = $true
                 }
             }
-            3 {Forget-Snapshot $SnapID}
+            3 {
+                Forget-Snapshot $SnapID
+                $MenuAddress = 1710 #SnapshotSelectionMenu
+            }
             4 {$MenuAddress = 1760} #EditSnapshotTagsMenu
             default {$MenuAddress = 1710} #SnapshotSelectionMenu
         }
