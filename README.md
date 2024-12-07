@@ -148,7 +148,7 @@ It's just the usual `SETTING=VALUE` and order doesn't matter.  You don't need qu
     - Display a yes/no conformation before performing a quick restore - 0 or 1
 - LogPath
     - Default: \<repository path\>\pr_data
-    - Path restore and dry run logs are saved to.  Can be changed to another absolute or relative path.
+    - Path logs are saved to.  Creates subfolders for different types of logs  Can be changed to another absolute or relative path.
 - Pin
     - Default: null
     - Path to any repository you'd like to pin for quick access.  Repeat on multiple lines as many times as you need.

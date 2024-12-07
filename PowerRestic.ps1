@@ -285,9 +285,9 @@ function Update-ResticPath {
 function Create-LogPath {
     #Creates missing subfolders in $script:Options.LogPath
 
-    if (Test-Path $(Unquote-Path($(invoke-expression $script:Options.LogPath)))) {return}
+    if (Test-Path "$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\restore") {return}
 
-    $folders = $(Unquote-Path(($(invoke-expression $script:Options.LogPath)))).split("\")
+    $folders = $("$(Unquote-Path(($(invoke-expression $script:Options.LogPath))))\restore\").split("\")
     $builtPath = ""
     foreach ($folder in $folders) {
         if ($folder -eq "") {continue}
@@ -1728,13 +1728,13 @@ function Write-RestoreLog {
         $lines
     )
 
-    if (-not(Test-Path $(Unquote-Path($(invoke-expression $script:Options.LogPath))))) {Create-LogPath}
+    if (-not(Test-Path "$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\restore")) {Create-LogPath}
     if ($script:RestoreDryRunOption -eq $false) {
         $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log.txt"
     } else {
         $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log_Dry_Run.txt"
     }
-    $lines | out-file "$(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\$($script:LastRestoreLog)"))"
+    $lines | out-file "$(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\restore\$($script:LastRestoreLog)"))"
 }
 
 function Open-RestoreLog {
@@ -1745,7 +1745,7 @@ function Open-RestoreLog {
     param (
         [string]$log = $script:LastRestoreLog
     )
-    cmd /c "start `"`" $(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\$($Log)"))"
+    cmd /c "start `"`" $(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\restore\$($Log)"))"
 }
 
 function Restore-SingleItemDryRunMenu {
