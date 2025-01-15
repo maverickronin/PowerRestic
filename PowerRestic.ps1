@@ -1,5 +1,5 @@
 ﻿# PowerRestic - Text Menu interface for restic
-# Copyright (C) 2024    maverickronin
+# Copyright (C) 2025    maverickronin
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -2886,7 +2886,7 @@ while ($true) {
         )
         if ($MenuChoice -eq 1) {
             cls
-            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check"
+            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check -vv"
             cmd /c $c
             pause
         }
@@ -2909,7 +2909,7 @@ while ($true) {
         )
         if ($MenuChoice -eq 1) {
             cls
-            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check $RepoCheckCommand"
+            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check $RepoCheckCommand -vv"
             cmd /c $c
             pause
         }
