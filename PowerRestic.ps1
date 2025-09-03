@@ -23,6 +23,8 @@ $ErrorActionPreference = 'Stop'
 $FormatEnumerationLimit = -1
 $ResticPath = $null
 $MenuAddress = 0
+$RClonePath = $null
+$RCloneInPath = $false
 
 enum RestoreOverwriteOption {
     Different
@@ -44,10 +46,11 @@ function Clear-Variables {
     $script:RepoPath = $null #Path to root folder of selected repository
     $script:RepoPassword = $null #Password to selected repository
     $script:RepoPasswordCommand = $null #No password flag added to repo command is set
-    $script:env:RESTIC_PASSWORD = $null #Environment variable Restic  reads the password from
+    $env:RESTIC_PASSWORD = $null #Environment variable Restic reads the password from
     $script:RepoStats = $null #Object repository information from different  commands is merged into
     $script:RepoOpened = $false #Set to true after basic info is successfully read from repository
     $script:RepoInfo = $null #Identifying info read from repo as part of testing path/password
+    $script:RCLoneConf = "" #Path to RClone conf file for currently selected repo
     [array]$script:SnapIDs = @() #Restic's short snapshot IDs.  Used to get info about or browse a specific snapshot
     $script:SnapID = $null #Selected snapshot short ID for querying info or browsing
     $Script:NoPinned = $false #Set to true if Load-ini finds pinned repos
@@ -79,11 +82,13 @@ function Clear-Variables {
     [array]$script:WinHostFolders = @() #Array of subfolders of $WinHostFolderPath as objects
     [string[]]$script:WinHostFolderLines = @() #Subfolders of $WinHostFolderPath formatted as strings for menu display
 }
+
 function Load-ini {
     #Try to load ini file and figure out/create required settings if the ini file is missing
 
     #Reset changable settings
     [string[]] $script:Pinned = @()
+    [string[]] $script:RCLoneConfs = @()
     $script:Options = new-object PSobject
 
     #Load ini if it exists
@@ -92,12 +97,17 @@ function Load-ini {
         #Ignore string parsing failures because everything is going to be better validated later
         $ErrorActionPreference = 'SilentlyContinue'
         foreach ($line in $RawIni) {
-            #Check for exe path
+            #Check for restic.exe path
             if ($line -like "ResticPath=*" -and (test-path $(Unquote-Path(($line.substring((($line.split("="))[0]).length + 1).trim()))))) {
                 $script:ResticPath = $(Unquote-Path($line.substring((($line.split("="))[0]).length + 1).trim()))
+            #Check for RClone.exe path
+            } elseif ($line -like "RClonePath=*" -and (test-path $(Unquote-Path(($line.substring((($line.split("="))[0]).length + 1).trim()))))) {
+                $script:RClonePath = $(Unquote-Path($line.substring((($line.split("="))[0]).length + 1).trim()))
             #Make an array of pinned repos
             } elseif ($line -like "pin*=*") {
                 $script:Pinned += $line.substring((($line.split("="))[0]).length + 1).trim()
+            } elseif ($line -like "RCloneConf*=*") {
+                $script:RCLoneConfs += $line.substring((($line.split("="))[0]).length + 1).trim()
             #Skip comments, section headers,blank lines, lines starting with a space
             } elseif ($line[0] -in @(";","[",""," ") -or "=" -notin $line.ToCharArray()) {
                 #noop
@@ -225,9 +235,12 @@ function Find-ResticPath {
         $resticFound = $true
     } else {
         $i = 0
-        :findRestic while ($i -lt 3 -or $resticFound -eq $false) {
-            #Check working directory for restic.exe
-            if (Test-Path "restic.exe") {
+        :findRestic while ($i -lt $script:Options.Retries -or $resticFound -eq $false) {
+            #Check $env:PATH/$PWD for restic.exe
+            $ErrorActionPreference = 'Continue'
+            $o = cmd /c where restic.exe *>&1
+            $ErrorActionPreference = 'Stop'
+            if ($o -ne "INFO: Could not find files for the given pattern(s).") {
                 $script:ResticPath = "restic.exe"
                 $resticFound = $true
                 break findRestic
@@ -298,6 +311,186 @@ function Update-ResticPath {
     Update-Ini -OverwriteLines $iniOut
 }
 
+function Find-RClonePath {
+    #Confirms there is an item at $script:RClonePath
+    #Replaces/adds path to ini file if wrong/missing
+
+    #Work around to keep null/empty string from breaking test-path and
+    #causing the whole if else block to be skipped
+    if ($script:RClonePath -in "",$null) {$script:RClonePath = "???"}
+
+    $RCloneFound = $false
+    if (test-path $(Unquote-Path($script:RClonePath))) {
+        $RCloneFound = $true
+    } else {
+        $i = 0
+        :findRClone while ($i -lt $script:Options.Retries -or $RCloneFound -eq $false) {
+            #Check $env:PATH for rclone.exe
+            $ErrorActionPreference = 'Continue'
+            $o = cmd /c where rclone.exe *>&1
+            $ErrorActionPreference = 'Stop'
+            if ($o -ne "INFO: Could not find files for the given pattern(s)." -and $o -ne $("$PWD" + "\rclone.exe")) {
+                $script:RCloneInPath = $true
+                $RCloneFound = $true
+                break findRClone
+            }
+            #Check working directory for RClone.exe
+            if (Test-Path "RClone.exe") {
+                $script:RClonePath = ".\RClone.exe"
+                $RCloneFound = $true
+                break findRClone
+            }
+            #Ask user for path
+            if (Read-RClonePath) {
+                $RCloneFound = $true
+                break findRClone
+            } else {
+                write-host "Path not found!"
+                pause
+            }
+            $i++
+        }
+        #Update ini if initial path was bad
+        if ($RCloneFound -eq $true -and $script:RCloneInPath -eq $false) {Update-RClonePath}
+    }
+}
+
+function Read-RClonePath {
+    #Prompts for RClone path, tests path and returns true or false
+    #If true, set
+
+    cls
+    Write-Host "Please enter the path to the RClone executable:"
+    $s = Read-Host
+    if (Test-Path $(Unquote-Path($s))) {
+        $script:RClonePath = $s
+        $true
+        return
+    } else {
+        $false
+        return
+    }
+}
+
+function Update-RClonePath {
+    # Add/replaces RClonePath= line in ini file
+
+    $iniIn = get-content "PowerRestic.ini"
+    [string[]]$iniMiddle = @()
+    [string[]]$iniOut = @()
+
+    #Strip blank line and/or old RClone paths
+    foreach ($line in $iniIn) {
+        if ($line -like "RClonePath*=*" -or $line -eq "") {
+        continue
+        } else {
+            $iniMiddle += $line
+        }
+    }
+
+    # Add header and new path
+    if (($iniMiddle[0]).Trim() -eq "[PowerRestic]") {
+        $iniOut += $iniMiddle[0]
+        $iniOut += ""
+        $iniOut += "RClonePath=$($script:RClonePath)"
+        $iniOut += $iniMiddle[1..($iniMiddle.Count - 1)]
+    } else {
+        $iniOut += "[PowerRestic]"
+        $iniOut += ""
+        $iniOut += "RClonePath=$($script:RClonePath)"
+        $iniOut+= $iniMiddle
+    }
+
+    Update-Ini -OverwriteLines $iniOut
+}
+
+function Find-RCloneConfPath{
+    #Find and/or prompt for an RClone conf file path
+
+    if (Test-Path $("$env:AppData" + "\rclone\rclone.conf")) {
+        $DefaultRCloneConfExists = $true
+    } else {
+        $DefaultRCloneConfExists = $false
+    }
+    #Use default conf file if it exists and is explicitly set
+    if ($script:Options.RCloneDefaultConf -eq 1 -and $DefaultRCloneConfExists) {
+        $script:RCLoneConf = $("$env:AppData" + "\rclone\rclone.conf")
+        return
+    }
+    #Prompt for path if no config files are available
+    if ($script:Options.RCloneDefaultConf -ne 1 -and -not($DefaultRCloneConfExists) -and $script:RCLoneConfs.Count -eq 0) {
+        Add-RCloneConfPath
+        return
+    }
+    #List conf files otherwise
+    if ($DefaultRCloneConfExists) {$RCLoneConfs = ,$("$env:AppData" + "\rclone\rclone.conf") + $script:RCLoneConfs}
+    [string[]]$RCLoneConfsMenu = @()
+    $RCLoneConfsMenu += ,"Select RClone conf file"
+    $RCLoneConfsMenu += ""
+    $RCLoneConfsMenu += $script:RCLoneConfs
+    $RCLoneConfsMenu += "Add conf file"
+    Show-Menu -HeaderLines 2 -MenuLines $RCLoneConfsMenu
+    if ($script:MenuChoice -le $script:RCLoneConfs.Count) {
+        $script:RCLoneConf = $script:RCLoneConfs[$MenuChoice - 1]
+        return
+    } else {
+        Add-RCloneConfPath
+        return
+    }
+}
+
+function Add-RCloneConfPath {
+    #Adds RCloneConfPath entry to ini file
+
+    #Work around to keep null/empty string from breaking test-path and
+    #causing the whole if else block to be skipped
+
+    $RCloneConfPathFound = $false
+    $i = 0
+    :findRCloneConfPath while ($i -lt $script:Options.Retries -or $RCloneConfPathFound -eq $false) {
+        #Ask user for path
+        if (Read-RCloneConfPath) {
+            $RCloneConfPathFound = $true
+            break findRCloneConfPath
+        } else {
+            write-host "Path not found!"
+            pause
+        }
+        $i++
+    }
+    #Update ini if successful
+    if ($RCloneConfPathFound -eq $true) {
+        Update-Ini -AppendLine ("RCloneConfPath=" + "$script:RCloneConfPath")
+    }
+}
+
+function Read-RCloneConfPath {
+    #Prompts for RClone conf file path, tests path and returns true or false
+    #If true, set
+
+    cls
+    Write-Host "Please enter the path to the RClone conf file:"
+    $s = Read-Host
+    if (Test-Path $(Unquote-Path($s))) {
+        $script:RCloneConfPath = $s
+        $true
+        return
+    } else {
+        $false
+        return
+    }
+}
+
+function Check-LogPath {
+    #Redirects log path to a locally accessible location if repository path is not a locally
+    #accessible filesystem
+
+    if ($script:Options.LogPath -like '*$script:RepoPath*' -and $script:RepoPath -notmatch '^[a-z,A-Z]:\\') {
+        $subfolders = ((($script:RepoPath).Replace(":","\")).Replace("/","\")).Trim("\")
+        $script:Options.LogPath = '"' + "$env:APPDATA" + "\PowerRestic\" + "$subfolders" + '"'
+    }
+}
+
 function Create-LogPath {
     #Creates missing subfolders in $script:Options.LogPath
 
@@ -317,11 +510,14 @@ function Create-LogPath {
 }
 
 function Clear-ResticCache {
-    #Clears old cache based on restic's default threshold of "old"
+    #Clears old cache based on restic's default threshold of "old" if not instances are running
     #Ignore errors since it's not vital
 
-    $c = "$(Quote-Path($ResticPath))" + " cache --cleanup"
-    try {cmd /c $c | out-null} catch {}
+    if ((Get-Process | Where{$_.Name -like "restic"}).count -eq 0) {
+        Write-Host "Clearing old cache..."
+        $c = "$(Quote-Path($ResticPath))" + " cache --cleanup"
+        try {cmd /c $c | out-null} catch {}
+    }
 }
 
 function Show-Menu{
@@ -614,6 +810,26 @@ function Format-Bytes  {
 	}
 }
 
+function Append-RepoTypeOptions {
+    #Appends options specific to a repository type to Restic commands
+
+    param(
+        [string]$cmd,
+        [string]$path
+    )
+
+    if ($path -in $null,"") {
+        $path = $script:RepoPath
+    }
+    if ($path -like "RClone:*") {
+        if ($script:RCloneInPath -eq $false) {
+            $cmd += " -o rclone.program=`"`'$script:RClonePath`'`""
+        }
+    }
+    $cmd
+    return
+}
+
 function Open-Repo {
     #"Opens" a repo by checking its path and password and storing them for use in other commands
 
@@ -621,26 +837,30 @@ function Open-Repo {
         [Parameter(Mandatory = $true)]
         [string]$path
     )
-
     cls
-    #Confirm that folder even exists
-    $p = Validate-WinPath $path
-    if ($p[0] -eq $true) {
-        $path = $p[1]
+    #Check type of repository
+    if ($path -like "RClone:*") {
+        Find-RClonePath
+        Find-RCloneConfPath
     } else {
-        "$path is not a valid path.  Please try again"
-        pause
-        return
+        #Confirm that a folder exists if not RClone
+        $p = Validate-WinPath $path
+        if ($p[0] -eq $true) {
+            $path = $p[1]
+        } else {
+            "$path is not a valid path.  Please try again"
+            pause
+            return
+        }
+        if ($path -eq "" -or -not(Test-Path $(Unquote-Path($path)))) {
+            Write-Host "$path not found.  Please try again"
+            pause
+            return
+        } else {
+            Write-Host "$path exists."
+            write-host ""
+        }
     }
-    if ($path -eq "" -or -not(Test-Path $(Unquote-Path($path)))) {
-        Write-Host "$path not found.  Please try again"
-        pause
-        return
-    } else {
-        Write-Host "$path exists."
-        write-host ""
-    }
-
     #Automatically try to open with no password
     $i = -1 #Offset for automatic first try with no password
     $triedLocked = $false #Only attempt remove exclusive locks on the repo once
@@ -666,6 +886,7 @@ function Open-Repo {
         }
 
         $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($Path))" + "$script:RepoPasswordCommand" + " cat config"
+        $c = Append-RepoTypeOptions "$c" "$path"
         #shenanigans to hide restic's output from console while still storing it in a variable
         $ErrorActionPreference = 'Continue'
         $o = cmd /c $c *>&1
@@ -698,6 +919,7 @@ function Open-Repo {
             $script:RepoPath = $path
             $o | Add-Member -NotePropertyName "repo_path" $script:RepoPath
             $script:RepoInfo = $o
+            Check-LogPath
             return
         } else {
             #Hide failure notice for first try and get rid of the no password flag
@@ -766,6 +988,7 @@ function Unlock-Repo {
         )
         if ($MenuChoice -eq 1) {
             $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($Path))" + "$script:RepoPasswordCommand" + " unlock"
+            $c = Append-RepoTypeOptions "$c" "$path"
             cmd /c $c
             Pause
             return
@@ -819,6 +1042,7 @@ function Gen-RepoStats {
     write-host "Getting repository stats..."
     #Build commands for each type of stat report
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand"
+    $c = Append-RepoTypeOptions "$c" "$path"
     $RestoreSizeCommand = $c + " stats --json --mode restore-size"
     $FileContentsCommand = $c + " stats --json --mode files-by-contents"
     $RawDataCommand = $c + " stats --json --mode raw-data"
@@ -860,6 +1084,7 @@ function Gen-Snapshots {
 
     #Build command
     $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($script:RepoPath))" + "$script:RepoPasswordCommand" + " snapshots"
+    $c = Append-RepoTypeOptions "$c" "$path"
     $Output = cmd /c $c
 
     #Count snapshots in basic output and enumerate their short IDs
@@ -879,6 +1104,7 @@ function Get-SnapshotStats {
     cls
     write-host "Getting snapshot stats..."
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " cat snapshot" + " $SnapID"
+    $c = Append-RepoTypeOptions "$c" "$path"
     $Script:SnapshotStatsRaw = cmd /c $c | ConvertFrom-Json
 }
 
@@ -929,6 +1155,7 @@ function Forget-Snapshot {
 
     if ($script:MenuChoice -eq 1) {
         $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " forget" + " $SnapID -vv"
+        $c = Append-RepoTypeOptions "$c" "$path"
         cmd /c $c
         pause
         #Regen snapshots so the old one disappears from the UI
@@ -944,6 +1171,7 @@ function Find-ChangedSnapshot {
     cls
     write-host "Finding updated snapshot..."
     $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($script:RepoPath))" + "$script:RepoPasswordCommand" + " snapshots --json"
+    $c = Append-RepoTypeOptions "$c" "$path"
     $newSnapshots = cmd /c $c | ConvertFrom-Json
 
     foreach ($snapshot in $newSnapshots) {
@@ -988,6 +1216,7 @@ $pattern = @"
 
     cls
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --add $(Quote-Path($tag))" + " $($script:SnapID)"
+    $c = Append-RepoTypeOptions "$c" "$path"
     cmd /c $c
 }
 
@@ -1022,6 +1251,7 @@ function Remove-SnapshotTag {
     if ($script:MenuChoice -eq 1) {
         cls
         $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --remove $(Quote-Path($script:SnapshotStatsRaw.tags[$i]))" + " $($script:SnapID)"
+        $c = Append-RepoTypeOptions "$c" "$path"
         cmd /c $c
     }
 }
@@ -1040,11 +1270,13 @@ function Clear-SnapshotTags {
 
     cls
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --set PowerResticTemp" + " $($script:SnapID)"
+    $c = Append-RepoTypeOptions "$c" "$path"
     cmd /c $c
     cls
     Find-ChangedSnapshot
     cls
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --remove PowerResticTemp" + " $($script:SnapID)"
+    $c = Append-RepoTypeOptions "$c" "$path"
     cmd /c $c
 }
 
@@ -1071,6 +1303,7 @@ Function Prune-Repo {
 
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " prune" + " $SnapID -vv" + "$(Get-PruneCommand)"
     if ($($DryRun).IsPresent) {$c += " --dry-run"}
+    $c = Append-RepoTypeOptions "$c" "$path"
     cmd /c $c
     pause
 }
@@ -1081,6 +1314,7 @@ function Gen-FolderData {
     cls
     write-host "Getting folder contents..."
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " ls" + " $SnapID" + " $(Quote-Path($script:FolderPath))" + " --json"
+    $c = Append-RepoTypeOptions "$c" "$path"
     $script:FolderData = cmd /c $c | ConvertFrom-Json
 }
 
@@ -1508,6 +1742,7 @@ function Gen-FolderDataRecursive {
     cls
     write-host "Getting folder details..."
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " ls" + " $SnapID" + " $(Quote-Path($script:FolderPath))" + " --recursive --json"
+    $c = Append-RepoTypeOptions "$c" "$path"
     $script:FolderDataRecursiveRaw = cmd /c $c | ConvertFrom-Json
 }
 
@@ -1623,6 +1858,7 @@ function Restore-Item {
     }
     if ($script:RestoreDeleteOption) {$c += " --delete"}
     if ($script:RestoreDryRunOption -eq $true) {$c += " --dry-run"}
+    $c = Append-RepoTypeOptions "$c" "$path"
 
     #Soft fail to catch logs and ask user about error
     $ErrorActionPreference = 'Continue'
@@ -1746,11 +1982,11 @@ function Write-RestoreLog {
 
     if (-not(Test-Path "$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\restore")) {Create-LogPath}
     if ($script:RestoreDryRunOption -eq $false) {
-        $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log.txt"
+        $script:LastRestoreLog = "$(get-date -Format "yyyy-MM-dd--HH-mm-ss")" + "_Restore_Log.txt"
     } else {
-        $script:LastRestoreLog = "$(get-date -Format "yyyy-HH-mm--ss")" + "_Restore_Log_Dry_Run.txt"
+        $script:LastRestoreLog = "$(get-date -Format "yyyy-MM-dd--HH-mm-ss")" + "_Restore_Log_Dry_Run.txt"
     }
-    $lines | out-file "$(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\restore\$($script:LastRestoreLog)"))"
+    $lines | out-file $(Invoke-Expression ("$(Quote-Path("$(Unquote-Path($(invoke-expression $script:Options.LogPath)))\restore\$($script:LastRestoreLog)"))"))
 }
 
 function Open-RestoreLog {
@@ -1838,7 +2074,7 @@ function Validate-WinPath {
     #Absolute paths
     if ($($Relative).IsPresent -eq $false -and $($Search).IsPresent -eq $false) {
         #Must start with <X>:\ and be at least 3 chars
-        if ($pathIn -notmatch '^[a-z,A-Z]{1}:\\' -or $pathIn.Length -lt 3) {
+        if ($pathIn -notmatch '^[a-z,A-Z]{1}:\\' -or $pathIn.Length -lt $script:Options.Retries) {
             $false
             return
         } else {
@@ -2105,6 +2341,7 @@ function Create-Repo {
     $c = "$(Quote-Path($script:ResticPath))" + " init -r " + "$(Quote-Path($p))"
     #This will still count as $null and not "" even after $env:RESTIC_PASSWORD = ""
     if ($env:RESTIC_PASSWORD -eq $null) {$c += " --insecure-no-password"}
+    $c = Append-RepoTypeOptions "$c" "$path"
     cmd /c $C
     pause
 
@@ -2469,35 +2706,34 @@ function Get-RestoreDryRunWarningString {
 ###################################################################################################
 #   0 - MainMenu
 ###################################################################################################
-#1000 - TopRepositoryMenu                         #2000 - TopBackupTaskMenu
-#1100 - ChoosePinnedRepositoryMenu
-#1200 - PinRepositoryMenu
-#1300 - UnpinRepositoryMenu
-#1400 - EnterRepositoryManuallyMenu
-#1500 - CreateRepositoryMenu
-#1700 - RepositoryOperationMenu
-#1710 - SnapshotSelectionMenu
-#1715 - SnapshotOperationsMenu
-#1720 - CheckRepositoryMenu
-#1730 - CheckRepositoryDataTypeMenu
-#1740 - ConfirmCheckRepositoryMetadataOnlyMenu
-#1750 - ConfirmCheckRepositoryFileDataMenu
-#1760 - EditSnapshotTagsMenu
-#1770 - PruneRepositoryData
-#1800 - BrowseAndRestoreMenu
-#1805 - ConfirmQuickRestore
-#1810 - RestoreSingleItemDestinationMenu
-#1820 - RestoreSingleItemOptionsMenu
-#1830 - ConfirmRestoreSingleItemMenu
-#1840 - RestoreQueueDestinationMenu
-#1850 - RestoreQueueOptionsMenu
-#1860 - ConfirmRestoreQueueMenu
-#1870 - ViewRestoreQueue
+# 1000 - TopRepositoryMenu                         # 2000 - TopBackupTaskMenu
+# 1100 - ChoosePinnedRepositoryMenu
+# 1200 - PinRepositoryMenu
+# 1300 - UnpinRepositoryMenu
+# 1400 - EnterRepositoryManuallyMenu
+# 1500 - CreateRepositoryMenu
+# 1700 - RepositoryOperationMenu
+# 1710 - SnapshotSelectionMenu
+# 1715 - SnapshotOperationsMenu
+# 1720 - CheckRepositoryMenu
+# 1730 - CheckRepositoryDataTypeMenu
+# 1740 - ConfirmCheckRepositoryMetadataOnlyMenu
+# 1750 - ConfirmCheckRepositoryFileDataMenu
+# 1760 - EditSnapshotTagsMenu
+# 1770 - PruneRepositoryData
+# 1800 - BrowseAndRestoreMenu
+# 1805 - ConfirmQuickRestore
+# 1810 - RestoreSingleItemDestinationMenu
+# 1820 - RestoreSingleItemOptionsMenu
+# 1830 - ConfirmRestoreSingleItemMenu
+# 1840 - RestoreQueueDestinationMenu
+# 1850 - RestoreQueueOptionsMenu
+# 1860 - ConfirmRestoreQueueMenu
+# 1870 - ViewRestoreQueue
 
 cls
 Write-Host "Starting up..."
 Load-ini
-Write-Host "Clearing old cache..."
 Clear-ResticCache
 
 while ($true) {
@@ -2887,6 +3123,7 @@ while ($true) {
         if ($MenuChoice -eq 1) {
             cls
             $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check -vv"
+            $c = Append-RepoTypeOptions "$c" "$path"
             cmd /c $c
             pause
         }
@@ -2910,6 +3147,7 @@ while ($true) {
         if ($MenuChoice -eq 1) {
             cls
             $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check $RepoCheckCommand -vv"
+            $c = Append-RepoTypeOptions "$c" "$path"
             cmd /c $c
             pause
         }
