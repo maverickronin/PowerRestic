@@ -50,7 +50,7 @@ function Clear-Variables {
     $script:RepoStats = $null #Object repository information from different  commands is merged into
     $script:RepoOpened = $false #Set to true after basic info is successfully read from repository
     $script:RepoInfo = $null #Identifying info read from repo as part of testing path/password
-    $script:RCLoneConf = "" #Path to RClone conf file for currently selected repo
+    $env:RCLONE_CONFIG = "" #Path to RClone conf file for currently selected repo
     [array]$script:SnapIDs = @() #Restic's short snapshot IDs.  Used to get info about or browse a specific snapshot
     $script:SnapID = $null #Selected snapshot short ID for querying info or browsing
     $Script:NoPinned = $false #Set to true if Load-ini finds pinned repos
@@ -407,36 +407,64 @@ function Update-RClonePath {
 function Find-RCloneConfPath{
     #Find and/or prompt for an RClone conf file path
 
+    #Check if default conf files exists
     if (Test-Path $("$env:AppData" + "\rclone\rclone.conf")) {
         $DefaultRCloneConfExists = $true
     } else {
         $DefaultRCloneConfExists = $false
     }
-    #Use default conf file if it exists and is explicitly set
-    if ($script:Options.RCloneDefaultConf -eq 1 -and $DefaultRCloneConfExists) {
-        $script:RCLoneConf = $("$env:AppData" + "\rclone\rclone.conf")
-        return
+
+    $i = 0
+    while ($i -le $script:Options.Retries) {
+        #Use default conf file without prompting if it exists and is explicitly set
+        if ($script:Options.RCloneDefaultConf -eq 1 -and $DefaultRCloneConfExists) {
+            $env:RCLONE_CONFIG = ""
+        #Prompt for path if no config files are available
+        } elseif ($script:Options.RCloneDefaultConf -ne 1 -and -not($DefaultRCloneConfExists) -and $script:RCLoneConfs.Count -eq 0) {
+            Add-RCloneConfPath
+        #List conf files in menu otherwise
+        } else {
+            #.Add default to list of manually specified conf files
+            if ($DefaultRCloneConfExists -and $script:RCLoneConfs[0] -ne "Use default conf file") {
+                $script:RCLoneConfs = ,"Use default conf file" + $script:RCLoneConfs
+            }
+            #Build and display menu
+            [string[]]$RCLoneConfsMenu = @()
+            $RCLoneConfsMenu += ,"Select RClone conf file"
+            $RCLoneConfsMenu += ""
+            $RCLoneConfsMenu += $script:RCLoneConfs
+            $RCLoneConfsMenu += "Add conf file"
+            Show-Menu -HeaderLines 2 -MenuLines $RCLoneConfsMenu
+            if ($script:MenuChoice -eq 1) {
+                $env:RCLONE_CONFIG = "" #$("$env:AppData" + "\rclone\rclone.conf")
+            } elseif ($script:MenuChoice -gt 1 -and $script:MenuChoice -le $script:RCLoneConfs.Count) {
+                $env:RCLONE_CONFIG = $script:RCLoneConfs[$MenuChoice - 1]
+            } else {
+                Add-RCloneConfPath
+            }
+        }
+        #Test conf file
+        if (Test-RCloneConfExists) {
+            return
+        }
     }
-    #Prompt for path if no config files are available
-    if ($script:Options.RCloneDefaultConf -ne 1 -and -not($DefaultRCloneConfExists) -and $script:RCLoneConfs.Count -eq 0) {
-        Add-RCloneConfPath
-        return
-    }
-    #List conf files otherwise
-    if ($DefaultRCloneConfExists) {$RCLoneConfs = ,$("$env:AppData" + "\rclone\rclone.conf") + $script:RCLoneConfs}
-    [string[]]$RCLoneConfsMenu = @()
-    $RCLoneConfsMenu += ,"Select RClone conf file"
-    $RCLoneConfsMenu += ""
-    $RCLoneConfsMenu += $script:RCLoneConfs
-    $RCLoneConfsMenu += "Add conf file"
-    Show-Menu -HeaderLines 2 -MenuLines $RCLoneConfsMenu
-    if ($script:MenuChoice -le $script:RCLoneConfs.Count) {
-        $script:RCLoneConf = $script:RCLoneConfs[$MenuChoice - 1]
-        return
+}
+
+function Test-RCloneConfExists {
+    #Test that RClone conf file exists, returns true of false
+
+    if ($env:RCLONE_CONFIG -in "",$null) {
+        if (-not(Test-Path $("$env:AppData" + "\rclone\rclone.conf"))) {
+            $false
+            return
+        }
     } else {
-        Add-RCloneConfPath
-        return
+        if (-not(Test-Path "$env:RCLONE_CONFIG")) {
+            $false
+            return
+        }
     }
+    $true
 }
 
 function Add-RCloneConfPath {
@@ -460,7 +488,7 @@ function Add-RCloneConfPath {
     }
     #Update ini if successful
     if ($RCloneConfPathFound -eq $true) {
-        Update-Ini -AppendLine ("RCloneConfPath=" + "$script:RCloneConfPath")
+        Update-Ini -AppendLine ("RCloneConf=" + "$script:RCloneConfPath")
     }
 }
 
@@ -842,6 +870,7 @@ function Open-Repo {
     if ($path -like "RClone:*") {
         Find-RClonePath
         Find-RCloneConfPath
+        cls
     } else {
         #Confirm that a folder exists if not RClone
         $p = Validate-WinPath $path
@@ -2832,17 +2861,19 @@ while ($true) {
             Write-host "Please enter the path to the repository you would like to pin:"
             $p = Read-Host
 
-            #Confirm the path is syntactically valid
-            $q = Validate-WinPath $p
-            if ($q[0] -eq $true) {
-                $p = $q[1]
-            } else {
-                Write-host ""
-                Write-host "Please enter a valid path"
-                Write-host ""
-                pause
-                $i++
-                continue
+            #Confirm local drive paths are syntactically valid
+            if ($p -match '^[a-z,A-Z]{1}:\\') {
+                $q = Validate-WinPath $p
+                if ($q[0] -eq $true) {
+                    $p = $q[1]
+                } else {
+                    Write-host ""
+                    Write-host "Please enter a valid path"
+                    Write-host ""
+                    pause
+                    $i++
+                    continue
+                }
             }
 
             #Check it doesn't already exist
