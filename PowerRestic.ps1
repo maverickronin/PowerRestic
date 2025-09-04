@@ -920,9 +920,10 @@ function Open-Repo {
         $ErrorActionPreference = 'Continue'
         $o = cmd /c $c *>&1
         $ErrorActionPreference = 'Stop'
-        #Check if repository is locked
-        foreach ($P in $o) {
-            if ($p -like "*unable to create lock*") {
+        #Check other error
+        foreach ($line in $o) {
+            #Check if repository is locked by other restic instance
+            if ($line -like "*unable to create lock*") {
                 #Abort if this has already happened once
                 if ($triedLocked -eq $true) {
                     cls
@@ -937,6 +938,12 @@ function Open-Repo {
                     $triedLocked = $true
                 }
                 break
+            }
+            #Display RClone errors
+            if ($line -like "*rclone*" -and ($line -like "*critical*" -or $line -like "*fatal*")) {
+                Write-Host $line
+                pause
+                break TryRepoPasswords
             }
         }
 
@@ -2304,15 +2311,17 @@ function Create-Repo {
         cls
         Write-Host "Enter a path for the new repository:"
         $p = Read-Host
-        $q = Validate-WinPath $p
-        if ($q[0] -eq $true) {
-            $p = $q[1]
-            $gotPath = $true
-            break
-        } else {
-            Write-Host "$p does not appear to be a valid path"
-            Write-Host "Please try again"
-            Pause
+        if ($p -match '^[a-z,A-Z]{1}:\\') {
+            $q = Validate-WinPath $p
+            if ($q[0] -eq $true) {
+                $p = $q[1]
+                $gotPath = $true
+                break
+            } else {
+                Write-Host "$p does not appear to be a valid path"
+                Write-Host "Please try again"
+                Pause
+            }
         }
         $i++
     }
@@ -2838,12 +2847,12 @@ while ($true) {
         }
 
         #Try and open the repo
-        Open-Repo $Pinned[($MenuChoice - 1)]
+        $p = $Pinned[($MenuChoice - 1)]
+        Open-Repo $p
         if ($RepoOpened -eq $true) {
             $MenuAddress = 1700 #RepositoryOperationMenu
         #Ask to remove pins if they have failed to open
         } else {
-            $p = $Pinned[($MenuChoice - 1)]
             Show-Menu -HeaderLines 2 -MenuLines @(
             "Failed to open $p!  Would you like to unpin it?"
             ""
