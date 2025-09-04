@@ -2322,6 +2322,11 @@ function Create-Repo {
                 Write-Host "Please try again"
                 Pause
             }
+        } elseif ($p -like "rclone:*") {
+            Find-RClonePath
+            Find-RCloneConfPath
+            $gotPath = $true
+            break
         }
         $i++
     }
@@ -2379,17 +2384,22 @@ function Create-Repo {
     $c = "$(Quote-Path($script:ResticPath))" + " init -r " + "$(Quote-Path($p))"
     #This will still count as $null and not "" even after $env:RESTIC_PASSWORD = ""
     if ($env:RESTIC_PASSWORD -eq $null) {$c += " --insecure-no-password"}
-    $c = Append-RepoTypeOptions "$c" "$path"
-    cmd /c $C
+    $c = Append-RepoTypeOptions "$c" "$p"
+    $ErrorActionPreference = 'Continue'
+    $o = cmd /c $c *>&1
+    $ErrorActionPreference = 'Stop'
+    Write-Host $o
     pause
 
-    Show-Menu -HeaderLines 2 -MenuLines @(
-        "Would you like to pin the new repository?"
-        ""
-        "Yes"
-        "No"
-    )
-    if ($script:MenuChoice -eq 1) {Pin-Repository $p}
+    if ($LASTEXITCODE -eq 0) {
+        Show-Menu -HeaderLines 2 -MenuLines @(
+            "Would you like to pin the new repository?"
+            ""
+            "Yes"
+            "No"
+        )
+        if ($script:MenuChoice -eq 1) {Pin-Repository $p}
+    }
 }
 
 function Validate-Decimal {
