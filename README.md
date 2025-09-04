@@ -1,6 +1,6 @@
 # PowerRestic
 
-PowerRestic aims to be a complete text menu interface for using the restic executable on Windows, with ***local*** repositories.  PowerRestic targets PowerShell 5.1 as that's still what Windows includes by default
+PowerRestic aims to be a complete text menu interface for using the restic executable on Windows, with ***local*** and ***RClone*** backend repositories.  PowerRestic targets PowerShell 5.1 as that's still what Windows includes by default
 
 Creation and scheduling of backup jobs is a planned feature but its current functionality is focused on managing and restoring from existing repositories and snapshots.
 
@@ -17,7 +17,7 @@ There are a few other things to keep in mind too
 
 ## Opening Repositories
 
-PowerRestic lets you pin a list of repositories for frequent use, open a repository by path, or create a new repository.
+PowerRestic lets you pin a list of repositories for frequent use, open a repository by path, or create a new repository.  Specify a local path as X:\Stuff\Repo or an RClone backend as rclone:backend-name:/repo
 
 ##### Open a pinned repository
 
@@ -42,6 +42,10 @@ Prompts for a path to create the repository in and a password if desired.  Asks 
 ##### Opening repositories in general
 
 PowerRestic will first attempt to "open" a repository with the `cat config` command.  It will  first attempt with the `--insecure-no-password` flag and then prompt for a password if that fails.  The password will be passed to restic via the `RESTIC_PASSWORD` environment variable.
+
+##### RClone settings
+
+When attempting an operation with an RCLone backed repository you will be prompted for the location of the RClone executable if it is not found in your $env:Path variable.  This will be saved for future use.  You will also be prompted to select an RClone conf file.  Initially you can either select the default conf file location (if it exists) or enter a path to another file.  Previously entered conf file paths will be saved.  There is also an option in the ini file to always use the default file location without prompting.
 
 ## Working with Repositories
 
@@ -132,6 +136,8 @@ As long as you point it to the restic executable when prompted, the script will 
 
 It's just the usual `SETTING=VALUE` and order doesn't matter.  You don't need quotes here either.
 
+##### Basic settings
+
 - ResticPath
     - The only thing it actually needs to run
 - DisplayLines
@@ -149,9 +155,26 @@ It's just the usual `SETTING=VALUE` and order doesn't matter.  You don't need qu
 - LogPath
     - Default: \<repository path\>\pr_data
     - Path logs are saved to.  Creates subfolders for different types of logs  Can be changed to another absolute or relative path.
+- RemoteRepoLogPath
+    - Default: $env:APPDATA\PowerRestic\<repository type>\<repository path>
+    - As above, but for repositories not mounted to the local filesystem such as RCLone backends.
 - Pin
     - Default: null
     - Path to any repository you'd like to pin for quick access.  Repeat on multiple lines as many times as you need.
+
+##### RClone settings
+
+- RClonePath
+    - Default: null
+    - Path to restic executable.  You will be prompted for this if RClone is not found in your $env:Path when opening an RCLone backed repository
+
+- RCloneDefaultConf
+    - Default: null
+    - Create this entry and set to 1 to always use the default conf file at $env:APPDATA\rclone\rclone.conf without prompting if the file exists.
+
+- RCloneConf
+    - Default: null
+    - Path to and RClone conf file at another location.  Repeat as needed like with Pin.  They will all be displayed in a menu for you to select from.
 
 ##### Repository Prune Settings
 
