@@ -33,6 +33,34 @@ enum RestoreOverwriteOption {
 }
 
 ####################################################################
+#Self called functions and helpers
+####################################################################
+
+#Basic checks for PowerShell Group Policy logging registry keys.  Exits if  they are active.
+if (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription") {
+    if ($(get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription").EnableTranscripting -eq 1) {
+        Write-Host "PowerShell transcription is enabled"
+        exit 1
+    }
+}
+if (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging") {
+    if ($(get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging").EnableModuleLogging -eq 1) {
+        Write-Host "PowerShell module logging is enabled"
+        exit 1
+    }
+}
+
+#Script calls self as Restic/Rclone password command to decrypt cached credentials
+if ($args[0] -ne $null) {
+    if (Test-Path $args[0]) {
+        $Credential = Import-Clixml -Path "$($args[0])"
+        $PlainTextPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR(($Credential).Password))
+        $PlainTextPassword
+        exit
+    }
+}
+
+####################################################################
 #Functions
 ####################################################################
 
@@ -47,10 +75,12 @@ function Clear-Variables {
     $script:RepoPassword = $null #Password to selected repository
     $script:RepoPasswordCommand = $null #No password flag added to repo command is set
     $env:RESTIC_PASSWORD = $null #Environment variable Restic reads the password from
+    $env:RESTIC_PASSWORD_COMMAND = $null #Command printing the password for the repository to stdout
     $script:RepoStats = $null #Object repository information from different  commands is merged into
     $script:RepoOpened = $false #Set to true after basic info is successfully read from repository
     $script:RepoInfo = $null #Identifying info read from repo as part of testing path/password
     $env:RCLONE_CONFIG = "" #Path to RClone conf file for currently selected repo
+    $env:RCLONE_PASSWORD_COMMAND = $null
     [array]$script:SnapIDs = @() #Restic's short snapshot IDs.  Used to get info about or browse a specific snapshot
     $script:SnapID = $null #Selected snapshot short ID for querying info or browsing
     $Script:NoPinned = $false #Set to true if Load-ini finds pinned repos
@@ -308,7 +338,7 @@ function Read-ResticPath {
 }
 
 function Update-ResticPath {
-    #Add/replaces ResticPath= line in ini file
+    #.Add/replaces ResticPath= line in ini file
 
     $iniIn = get-content "PowerRestic.ini"
     [string[]]$iniMiddle = @()
@@ -323,7 +353,7 @@ function Update-ResticPath {
         }
     }
 
-    #Add header and new path
+    #.Add header and new path
     if (($iniMiddle[0]).Trim() -eq "[PowerRestic]") {
         $iniOut += $iniMiddle[0]
         $iniOut += ""
@@ -478,6 +508,14 @@ function Find-RCloneConfPath{
             return
         }
     }
+}
+
+function Find-RCloneConfPW {
+
+}
+
+function Test-RCloneConfPW {
+
 }
 
 function Test-RCloneConfExists {
@@ -889,6 +927,31 @@ function Append-RepoTypeOptions {
     return
 }
 
+function Get-CredentialName {
+    #Creates a legal filename for saving a cached credential from a repository name and type
+
+    param ([string]$name)
+    $name = $(Replace-IllegalWinChars $name)
+    $name += "-credential.xml"
+    $name
+}
+
+function Save-Credential {
+    #Reads password and saves it to encrypted XML file
+
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$name
+    )
+    cls
+    Write-Host "Enter Password for $($name):"
+    $Password = read-host -AsSecureString
+    $Credential = New-Object -TypeName PSCredential -ArgumentList $ENV:COMPUTERNAME, $Password
+    $file = $(Get-CredentialName $name)
+    if (Test-Path "$file") {Remove-Item -Force "$file"}
+    $Credential | Export-Clixml -Path $file
+}
+
 function Open-Repo {
     #"Opens" a repo by checking its path and password and storing them for use in other commands
 
@@ -901,6 +964,7 @@ function Open-Repo {
     if ($path -like "RClone:*") {
         Find-RClonePath
         Find-RCloneConfPath
+        Find-RCloneConfPW
         cls
     } else {
         #Confirm that a folder exists if not RClone
@@ -931,19 +995,8 @@ function Open-Repo {
         if ($i -gt -1) {
             $script:RepoPasswordCommand = ""
             cls
-            Write-Host "Please enter the password for this Restic repository:"
-            #Silly workaround encrypting/decrypting because it's the only way to hide input in PS5.1
-            $HiddenPassword = Read-Host -AsSecureString
-            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($HiddenPassword)
-            $RepoPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-            #Free unmanaged memory
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-            if ($RepoPassword -eq "" -or $RepoPassword -eq $null) {
-                write-host "Repository password cannot be blank"
-                $i++
-                continue TryRepoPasswords
-            }
-            $env:RESTIC_PASSWORD = $RepoPassword
+            Save-Credential $path
+            $env:RESTIC_PASSWORD_COMMAND = "PowerShell -NoProfile -ExecutionPolicy bypass -file PowerRestic.ps1 $(Quote-Path($(Get-CredentialName $path)))"
         }
 
         $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($Path))" + "$script:RepoPasswordCommand" + " cat config"
@@ -1002,7 +1055,7 @@ function Open-Repo {
     }
 
     #Reset these if this function has failed out after passing the retry limit
-    $env:RESTIC_PASSWORD = ""
+    $env:RESTIC_PASSWORD_COMMAND = ""
     $script:RepoPasswordCommand = ""
 }
 
@@ -1114,7 +1167,7 @@ function Gen-RepoStats {
     write-host "Getting repository stats..."
     #Build commands for each type of stat report
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     $RestoreSizeCommand = $c + " stats --json --mode restore-size"
     $FileContentsCommand = $c + " stats --json --mode files-by-contents"
     $RawDataCommand = $c + " stats --json --mode raw-data"
@@ -1156,7 +1209,7 @@ function Gen-Snapshots {
 
     #Build command
     $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($script:RepoPath))" + "$script:RepoPasswordCommand" + " snapshots"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     $Output = cmd /c $c
 
     #Count snapshots in basic output and enumerate their short IDs
@@ -1176,7 +1229,7 @@ function Get-SnapshotStats {
     cls
     write-host "Getting snapshot stats..."
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " cat snapshot" + " $SnapID"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     $Script:SnapshotStatsRaw = cmd /c $c | ConvertFrom-Json
 }
 
@@ -1227,7 +1280,7 @@ function Forget-Snapshot {
 
     if ($script:MenuChoice -eq 1) {
         $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " forget" + " $SnapID -vv"
-        $c = Append-RepoTypeOptions "$c" "$path"
+        $c = Append-RepoTypeOptions "$c" "$RepoPath"
         cmd /c $c
         pause
         #Regen snapshots so the old one disappears from the UI
@@ -1243,7 +1296,7 @@ function Find-ChangedSnapshot {
     cls
     write-host "Finding updated snapshot..."
     $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($script:RepoPath))" + "$script:RepoPasswordCommand" + " snapshots --json"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     $newSnapshots = cmd /c $c | ConvertFrom-Json
 
     foreach ($snapshot in $newSnapshots) {
@@ -1288,7 +1341,7 @@ $pattern = @"
 
     cls
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --add $(Quote-Path($tag))" + " $($script:SnapID)"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     cmd /c $c
 }
 
@@ -1323,7 +1376,7 @@ function Remove-SnapshotTag {
     if ($script:MenuChoice -eq 1) {
         cls
         $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --remove $(Quote-Path($script:SnapshotStatsRaw.tags[$i]))" + " $($script:SnapID)"
-        $c = Append-RepoTypeOptions "$c" "$path"
+        $c = Append-RepoTypeOptions "$c" "$RepoPath"
         cmd /c $c
     }
 }
@@ -1342,13 +1395,13 @@ function Clear-SnapshotTags {
 
     cls
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --set PowerResticTemp" + " $($script:SnapID)"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     cmd /c $c
     cls
     Find-ChangedSnapshot
     cls
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " tag" + " --remove PowerResticTemp" + " $($script:SnapID)"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     cmd /c $c
 }
 
@@ -1375,7 +1428,7 @@ Function Prune-Repo {
 
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " prune" + " $SnapID -vv" + "$(Get-PruneCommand)"
     if ($($DryRun).IsPresent) {$c += " --dry-run"}
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     cmd /c $c
     pause
 }
@@ -1386,7 +1439,7 @@ function Gen-FolderData {
     cls
     write-host "Getting folder contents..."
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " ls" + " $SnapID" + " $(Quote-Path($script:FolderPath))" + " --json"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     $script:FolderData = cmd /c $c | ConvertFrom-Json
 }
 
@@ -1766,6 +1819,22 @@ function Cleave-FileName {
     }
 }
 
+function Replace-IllegalWinChars {
+    #Replaces characters illegal in Windows file names with an underscore or another specified
+    #character
+
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$in,
+        [string]$sub = "_"
+    )
+    $illegal = @("\","/",":","*",'"',"<",">","|")
+    if ($sub.Length -gt 1 -or $sub -in $illegal) {$sub = "_"}
+    $out = $in
+    foreach ($char in $illegal) {$out = $out.Replace("$char","_")}
+    $out
+}
+
 function Drill-Directory {
     #Go down a directory level in a snapshot and regens data
 
@@ -1814,7 +1883,7 @@ function Gen-FolderDataRecursive {
     cls
     write-host "Getting folder details..."
     $c = "$(Quote-Path($ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$RepoPasswordCommand" + " ls" + " $SnapID" + " $(Quote-Path($script:FolderPath))" + " --recursive --json"
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
     $script:FolderDataRecursiveRaw = cmd /c $c | ConvertFrom-Json
 }
 
@@ -1910,7 +1979,7 @@ function Restore-Item {
         $c += " $(Quote-Path("$script:SnapID" + ":" + "$($script:RestoreFromSingle.path)" + "/"))" + " --target $(Quote-Path("$script:RestoreTo" + "\" + "$(Cleave-FileName($script:RestoreFromSingle.path))"))" + " -vv"
     }
     if ($folder -eq $true -and $original -eq $true) {
-        #abcdef:/C/Dir1/Dir2/" --target "C:\Dir1\Dir2"
+        #abcdefg:/C/Dir1/Dir2/" --target "C:\Dir1\Dir2"
         $c += " $(Quote-Path("$script:SnapID" + ":" + "$($script:RestoreFromSingle.path)" + "/"))" + " --target $(Quote-Path($(Convert-NixPathToWin($($script:RestoreFromSingle).path))))" + " -vv"
     }
     if ($file -eq $true -and $original -eq $true) {
@@ -1930,7 +1999,7 @@ function Restore-Item {
     }
     if ($script:RestoreDeleteOption) {$c += " --delete"}
     if ($script:RestoreDryRunOption -eq $true) {$c += " --dry-run"}
-    $c = Append-RepoTypeOptions "$c" "$path"
+    $c = Append-RepoTypeOptions "$c" "$RepoPath"
 
     #Soft fail to catch logs and ask user about error
     $ErrorActionPreference = 'Continue'
@@ -3210,7 +3279,7 @@ while ($true) {
         if ($MenuChoice -eq 1) {
             cls
             $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check -vv"
-            $c = Append-RepoTypeOptions "$c" "$path"
+            $c = Append-RepoTypeOptions "$c" "$RepoPath"
             cmd /c $c
             pause
         }
@@ -3234,7 +3303,7 @@ while ($true) {
         if ($MenuChoice -eq 1) {
             cls
             $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check $RepoCheckCommand -vv"
-            $c = Append-RepoTypeOptions "$c" "$path"
+            $c = Append-RepoTypeOptions "$c" "$RepoPath"
             cmd /c $c
             pause
         }

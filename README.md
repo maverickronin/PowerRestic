@@ -41,7 +41,7 @@ Prompts for a path to create the repository in and a password if desired.  Asks 
 
 ##### Opening repositories in general
 
-PowerRestic will first attempt to "open" a repository with the `cat config` command.  It will  first attempt with the `--insecure-no-password` flag and then prompt for a password if that fails.  The password will be passed to restic via the `RESTIC_PASSWORD` environment variable.
+PowerRestic will first attempt to "open" a repository with the `cat config` command.  It will  first attempt with the `--insecure-no-password` flag and then prompt for a password if that fails.  The password will be cached to an encrypted file in the working directory.  The encryption key is tied to both the specific computer and user account they are created under.  The cached credentials can be decrypted by processes running under the same account that originally encrypted it.
 
 ##### RClone settings
 
