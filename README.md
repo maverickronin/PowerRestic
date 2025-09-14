@@ -45,7 +45,7 @@ PowerRestic will first attempt to "open" a repository with the `cat config` comm
 
 ##### RClone settings
 
-When attempting an operation with an RCLone backed repository you will be prompted for the location of the RClone executable if it is not found in your $env:Path variable.  This will be saved for future use.  You will also be prompted to select an RClone conf file.  Initially you can either select the default conf file location (if it exists) or enter a path to another file.  Previously entered conf file paths will be saved.  There is also an option in the ini file to always use the default file location without prompting.
+When attempting an operation with an RCLone backed repository you will be prompted for the location of the RClone executable if it is not found in your $env:Path variable.  This will be saved for future use.  You will also be prompted to select an RClone conf file.  Initially you can either select the default conf file location (if it exists) or enter a path to another file.  Previously entered conf file paths will be saved.  There is also an option in the ini file to always use the default file location without prompting.  If the conf file is encrypted you will be prompted for a password and it will be encrypted and cached as noted above for the repository password.
 
 ## Working with Repositories
 

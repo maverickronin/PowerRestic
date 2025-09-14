@@ -57,6 +57,8 @@ if ($args[0] -ne $null) {
         $PlainTextPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR(($Credential).Password))
         $PlainTextPassword
         exit
+    } else {
+        exit
     }
 }
 
@@ -511,11 +513,49 @@ function Find-RCloneConfPath{
 }
 
 function Find-RCloneConfPW {
+    #Finds if a password is needed for the RClone conf file and prompts for it necessary
+    #Returns $true or $false
 
+    #Try with no password
+    if (Test-RCloneConfPW) {
+        $true
+        return
+    #Prompt for password if needed
+    } else {
+        if ($env:RCLONE_CONFIG -in "",$null) {
+            $name = "RClone default conf file"
+        } else {
+            $name = $env:RCLONE_CONFIG
+        }
+        $i = 0
+        while ($i -lt $script:Options.Retries) {
+            Save-Credential $name
+            $env:RCLONE_PASSWORD_COMMAND = "PowerShell -NoProfile -ExecutionPolicy bypass -file PowerRestic.ps1 $(Quote-Path($(Get-CredentialName $name)))"
+            if (Test-RCloneConfPW) {
+                $true
+                return
+            }
+            $i++
+        }
+        $false
+        return
+    }
 }
 
 function Test-RCloneConfPW {
+    #Test if Rclone can read and decrypt the selected conf file and returns $true or $false
 
+    $c = "$(Quote-Path($script:RClonePath))" + " config touch --ask-password=false"
+    $ErrorActionPreference = 'Continue'
+    cmd /c $c *>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    if ($LASTEXITCODE -ne 0) {
+        $false
+        return
+    } else {
+        $true
+        return
+    }
 }
 
 function Test-RCloneConfExists {
@@ -964,7 +1004,11 @@ function Open-Repo {
     if ($path -like "RClone:*") {
         Find-RClonePath
         Find-RCloneConfPath
-        Find-RCloneConfPW
+        if (-not(Find-RCloneConfPW)) {
+            Write-Host "Could not open RClone conf file.  Please try again"
+            pause
+            return
+        }
         cls
     } else {
         #Confirm that a folder exists if not RClone
@@ -972,7 +1016,7 @@ function Open-Repo {
         if ($p[0] -eq $true) {
             $path = $p[1]
         } else {
-            "$path is not a valid path.  Please try again"
+            Write-Host "$path is not a valid path.  Please try again"
             pause
             return
         }
@@ -989,7 +1033,7 @@ function Open-Repo {
     $i = -1 #Offset for automatic first try with no password
     $triedLocked = $false #Only attempt remove exclusive locks on the repo once
     $script:RepoPasswordCommand = " --insecure-no-password"
-    $env:RESTIC_PASSWORD = ""
+    $env:RESTIC_PASSWORD_COMMAND = ""
     :TryRepoPasswords while ($i -lt $script:Options.Retries -and $script:RepoOpened -eq $false) {
         #Skip asking for password on first count
         if ($i -gt -1) {
