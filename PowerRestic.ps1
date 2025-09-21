@@ -248,7 +248,7 @@ $RemoteRepoLogSub =
     if ("PruneMaxUnused" -notin $script:Options.PSObject.Properties.Name) {
         $script:Options | Add-Member -NotePropertyName "PruneMaxUnused" "5%"  | out-null
     } else {
-        if ((Validate-Percentage -Number ($script:Options.PruneMaxUnused).Trim("%") -Hundred)) {
+        if ((Validate-Percentage -Number ($script:Options.PruneMaxUnused).Trim("%") -Hundred -AllowZero)) {
             $script:Options.PruneMaxUnused = $(($script:Options.PruneMaxUnused).Trim("%")) + "%"
         } else {
             $script:Options.PruneMaxUnused = "5%"
@@ -2572,7 +2572,7 @@ function Validate-Decimal {
 
 function Validate-Percentage {
     #Checks if a number can be interpreted as a percentage in either a 0-1 scale or a 0-100 scale
-    #Returns true or false, excludes 0% and 100%
+    #Returns true or false, excludes 0% and 100% by default
 
     param (
         [Parameter(Mandatory = $true)]
@@ -2580,7 +2580,8 @@ function Validate-Percentage {
         [Parameter(ParameterSetName='Hundred')]
         [switch]$Hundred,
         [Parameter(ParameterSetName='One')]
-        [switch]$One
+        [switch]$One,
+        [switch]$AllowZero
     )
 
     try {
@@ -2590,6 +2591,10 @@ function Validate-Percentage {
         return
     }
 
+    if ($AllowZero -and $number -eq 0) {
+        $true
+        return
+    }
     if ($Hundred) {
         if ($number -gt 0 -and $number -lt 100) {
             $true
