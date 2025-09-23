@@ -497,12 +497,20 @@ function Find-RCloneConfPath{
             $RCLoneConfsMenu += $script:RCLoneConfs
             $RCLoneConfsMenu += "Add conf file"
             Show-Menu -HeaderLines 2 -MenuLines $RCLoneConfsMenu
-            if ($script:MenuChoice -eq 1) {
-                $env:RCLONE_CONFIG = "" #$("$env:AppData" + "\rclone\rclone.conf")
-            } elseif ($script:MenuChoice -gt 1 -and $script:MenuChoice -le $script:RCLoneConfs.Count) {
-                $env:RCLONE_CONFIG = $script:RCLoneConfs[$MenuChoice - 1]
+            if ($DefaultRCloneConfExists -eq $true) {
+                if ($script:MenuChoice -eq 1) {
+                    $env:RCLONE_CONFIG = "" #$("$env:AppData" + "\rclone\rclone.conf")
+                } elseif ($script:MenuChoice -gt 1 -and $script:MenuChoice -le $script:RCLoneConfs.Count) {
+                    $env:RCLONE_CONFIG = $script:RCLoneConfs[$MenuChoice - 1]
+                } else {
+                    Add-RCloneConfPath
+                }
             } else {
-                Add-RCloneConfPath
+                if ($script:MenuChoice -le $script:RCLoneConfs.Count) {
+                    $env:RCLONE_CONFIG = $script:RCLoneConfs[$MenuChoice - 1]
+                } else {
+                    Add-RCloneConfPath
+                }
             }
         }
         #Test conf file
