@@ -284,6 +284,59 @@ function Make-Ini {
     }
 }
 
+function Update-Ini {
+    #appends a sting to the end of the ini file, removes lines beginning with a pattern or
+    #overwrites the entire file with an array of strings
+
+    param (
+        [parameter(ParameterSetName="Append")]
+        [string]$AppendLine = "",
+        [parameter(ParameterSetName="Remove")]
+        [string[]]$RemoveLines = "",
+        [parameter(ParameterSetName="Overwrite")]
+        [string[]]$OverwriteLines = @()
+    )
+
+    #Remake ini if missing
+    if ($AppendLine -ne "" -and $RemoveLines -ne "" -and -not(Test-Path PowerRestic.ini)) {
+        Load-ini
+    }
+
+    #Append single line
+    if ($AppendLine -ne "") {
+        if ((Get-Content PowerRestic.ini -Raw)[-1] -match '\r' -or (Get-Content PowerRestic.ini -Raw)[-1] -match '\n') {
+            Add-Content -Value $AppendLine -Path PowerRestic.ini -Force
+        } else {
+            Add-Content -Value "`n$AppendLine" -Path PowerRestic.ini -Force
+        }
+    }
+
+    #remove lines starting with $RemoveLines
+    if ($RemoveLines -ne "") {
+        $oldLines = Get-Content PowerRestic.ini
+        [string[]]$newlines = @()
+        foreach ($line in $oldLines) {
+            if ($line -notlike $("$RemoveLines" + "*")) {$newlines += $line}
+        }
+        $newlines | Out-File -FilePath PowerRestic.ini -Force
+    }
+
+    #Overwrite entire files
+    if ($OverwriteLines.Count -gt 0) {
+        if (Test-Path PowerRestic.ini) {
+            try {
+                del PowerRestic.ini -ErrorAction Stop
+            } catch {
+                throw "Failed to delete PowerRestic.ini"
+            }
+        }
+        $OverwriteLines | Out-File -FilePath PowerRestic.ini -Force
+    }
+
+    #Reload ini after changes
+    Load-ini
+}
+
 function Find-ResticPath {
     #Confirms there is an item at $script:ResticPath
     #Replaces/adds path to ini file if wrong/missing
@@ -883,7 +936,7 @@ function Read-MenuChoice {
     #Start with all the numbers
     $AcceptableChoices = 0..$NumberOfOptions
 
-    #Add options for different combinations
+    #.Add options for different combinations
 
     #Single page flat menu with back/exit
     if ($($ScrollMenu).IsPresent -eq $false -and $($RestoreFolderMenu).IsPresent -eq $false  -and $($LocalFolderMenu).IsPresent -eq $false  -and $($QueueMenu).IsPresent -eq $false -and $($SlashForBack).IsPresent -eq $true) {
@@ -980,7 +1033,7 @@ function Get-CredentialName {
 
     param ([string]$name)
     $name = $(Replace-IllegalWinChars $name)
-    $name += "-credential.xml"
+    $name += "-pr-credential.xml"
     $name
 }
 
@@ -1691,7 +1744,7 @@ function New-WinHostFolder {
                 )
                 switch ($script:MenuChoice) {
                     1 {break NewFolderErrorLoop}
-                    2 {exit}
+                    2 {Clean-Exit}
                     3 {Write-Host $folderError
                         Pause
                     }
@@ -2155,7 +2208,7 @@ function Restore-ErrorMenu {
 
         switch ($script:MenuChoice) {
             1 {return}
-            2 {exit}
+            2 {Clean-Exit}
             3 {Write-Host $args
                 Pause
             }
@@ -2665,46 +2718,6 @@ function Validate-DataSize {
     return
 }
 
-function Update-Ini {
-    #appends a sting to the end of the ini file or overwrites the entire file with an array of strings
-
-    param (
-        [parameter(ParameterSetName="Append")]
-        [string]$AppendLine = "",
-        [parameter(ParameterSetName="Overwrite")]
-        [string[]]$OverwriteLines = @()
-    )
-
-    #Remake ini if missing
-    if ($AppendLine -ne "" -and -not(Test-Path PowerRestic.ini)) {
-        Load-ini
-    }
-
-    #Append single line
-    if ($AppendLine -ne "" -and $OverwriteLines.Count -eq 0) {
-        if ((Get-Content PowerRestic.ini -Raw)[-1] -match '\r' -or (Get-Content PowerRestic.ini -Raw)[-1] -match '\n') {
-            Add-Content -Value $AppendLine -Path PowerRestic.ini -Force
-        } else {
-            Add-Content -Value "`n$AppendLine" -Path PowerRestic.ini -Force
-        }
-    }
-
-    #Overwrite entire files
-    if ($OverwriteLines.Count -gt 0 -and $AppendLine -eq "") {
-        if (Test-Path PowerRestic.ini) {
-            try {
-                del PowerRestic.ini -ErrorAction Stop
-            } catch {
-                throw "Failed to delete PowerRestic.ini"
-            }
-        }
-        $OverwriteLines | Out-File -FilePath PowerRestic.ini -Force
-    }
-
-    #Reload ini after changes
-    Load-ini
-}
-
 function Pin-ConformationMenu {
     #Takes a path and ask for conformation before (Un)Pinning it
 
@@ -2904,6 +2917,29 @@ function Get-RestoreDryRunWarningString {
     }
 }
 
+function Clean-Exit {
+    #Cleanup on exit.  Will probably add more in the future. Exit code is 0 if not specified
+    #CleanupOnly switch to perform cleanup without exiting
+
+    param(
+        [int]$code = 0,
+        [switch]$CleanupOnly
+    )
+
+    Remove-CachedCredentials
+    Update-Ini -RemoveLine "dirty"
+    if (-not($CleanupOnly.IsPresent)) {exit $code}
+}
+
+function Remove-CachedCredentials {
+    #Deletes cached credential files if set to
+
+
+    if ($script:Options.ClearCachedCredentialsOnExit -ne 0) {
+        gci -Force -Filter "*-pr-credential.xml" | Remove-Item -Force | Out-Null
+    }
+}
+
 ###################################################################################################
 #Main loop
 ###################################################################################################
@@ -2946,865 +2982,873 @@ cls
 Write-Host "Starting up..."
 Load-ini
 Clear-ResticCache
+if ($script:Options.dirty -ne $null) {Clean-Exit -CleanupOnly}
+Update-Ini -AppendLine "dirty=1"
 
-while ($true) {
+#General try/catch to perform cleanup in event of other unhandled errors
+try {
+    while ($true) {
 
-    :MainMenu while ($MenuAddress -eq 0) {
-        Clear-Variables
-        Show-Menu -HeaderLines 2 -MenuLines @(
-            "Welcome to PowerRestic!",
-            "",
-            "Work with repositories",
-            "Work with backup tasks",
-            "Exit"
-        )
-        switch ($MenuChoice) {
-            1 {$MenuAddress = 1000} #TopRepositoryMenu
-            2 {$MenuAddress = 2000} #TopBackupTaskMenu
-            3 {exit}
-        }
-        break
-
-    }
-
-    ###################################################################################################
-    #Repository Tasks
-    ###################################################################################################
-
-    :TopRepositoryMenu while ($MenuAddress -eq 1000) {
-        Clear-Variables
-        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
-            "Manage Repositories"
-            ""
-            "Choose a pinned repository"
-            "Pin a Repository"
-            "Unpin a repository"
-            "Enter a repository path manually"
-            "Create a repository"
-            "Exit"
-        )
-        switch ($MenuChoice) {
-            1 {$MenuAddress = 1100} #ChoosePinnedRepositoryMenu
-            2 {$MenuAddress = 1200} #PinRepositoryMenu
-            3 {$MenuAddress = 1300} #UnpinRepositoryMenu
-            4 {$MenuAddress = 1400} #EnterRepositoryManuallyMenu
-            5 {$MenuAddress = 1500} #CreateRepositoryMenu
-            6 {exit}
-            "/" {$MenuAddress = 0}    #MainMenu
-        }
-        break
-
-    }
-
-    :ChoosePinnedRepositoryMenu while ($MenuAddress -eq 1100) {
-        #Go back up a level if there's nothing to show
-        if ($Pinned.count -lt 1) {
-            Write-host "No pinned repos found"
-            write-host ""
-            pause
-            write-host ""
-            $MenuAddress = 1000 #TopRepositoryMenu
-            break ChoosePinnedRepositoryMenu
-        }
-        #Build string array listing repository options
-        [string[]] $PinnedRepoHeader = @(
-            "$($Pinned.Count) pinned repositories found"
-            ""
-        )
-
-        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines ($PinnedRepoHeader + $Pinned)
-        if ($MenuChoice -in "/") {
-            #Go back
-            $MenuAddress = 1000
-            break ChoosePinnedRepositoryMenu
-        }
-
-        #Try and open the repo
-        $p = $Pinned[($MenuChoice - 1)]
-        Open-Repo $p
-        if ($RepoOpened -eq $true) {
-            $MenuAddress = 1700 #RepositoryOperationMenu
-        #Ask to remove pins if they have failed to open
-        } else {
+        :MainMenu while ($MenuAddress -eq 0) {
+            Clear-Variables
             Show-Menu -HeaderLines 2 -MenuLines @(
-            "Failed to open $p!  Would you like to unpin it?"
-            ""
-            "Yes"
-            "No"
+                "Welcome to PowerRestic!",
+                "",
+                "Work with repositories",
+                "Work with backup tasks",
+                "Exit"
             )
-            if ($MenuChoice -eq 1) {Unpin-Repository $p}
+            switch ($MenuChoice) {
+                1 {$MenuAddress = 1000} #TopRepositoryMenu
+                2 {$MenuAddress = 2000} #TopBackupTaskMenu
+                3 {Clean-Exit}
+            }
+            break
+
         }
-    }
 
-    :PinRepositoryMenu while ($MenuAddress -eq 1200) {
-        $i = 0
-        :PinRepositoryMenuRetry while ($i -lt $Options.Retries -and $RepoOpened -eq $false) {
-            cls
-            Write-host "Please enter the path to the repository you would like to pin:"
-            $p = Read-Host
+        ###################################################################################################
+        #Repository Tasks
+        ###################################################################################################
 
-            #Confirm local drive paths are syntactically valid
-            if ($p -match '^[a-z,A-Z]{1}:\\') {
-                $q = Validate-WinPath $p
-                if ($q[0] -eq $true) {
-                    $p = $q[1]
-                } else {
-                    Write-host ""
-                    Write-host "Please enter a valid path"
-                    Write-host ""
-                    pause
-                    $i++
-                    continue
-                }
+        :TopRepositoryMenu while ($MenuAddress -eq 1000) {
+            Clear-Variables
+            Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
+                "Manage Repositories"
+                ""
+                "Choose a pinned repository"
+                "Pin a Repository"
+                "Unpin a repository"
+                "Enter a repository path manually"
+                "Create a repository"
+                "Exit"
+            )
+            switch ($MenuChoice) {
+                1 {$MenuAddress = 1100} #ChoosePinnedRepositoryMenu
+                2 {$MenuAddress = 1200} #PinRepositoryMenu
+                3 {$MenuAddress = 1300} #UnpinRepositoryMenu
+                4 {$MenuAddress = 1400} #EnterRepositoryManuallyMenu
+                5 {$MenuAddress = 1500} #CreateRepositoryMenu
+                6 {Clean-Exit}
+                "/" {$MenuAddress = 0}    #MainMenu
+            }
+            break
+
+        }
+
+        :ChoosePinnedRepositoryMenu while ($MenuAddress -eq 1100) {
+            #Go back up a level if there's nothing to show
+            if ($Pinned.count -lt 1) {
+                Write-host "No pinned repos found"
+                write-host ""
+                pause
+                write-host ""
+                $MenuAddress = 1000 #TopRepositoryMenu
+                break ChoosePinnedRepositoryMenu
+            }
+            #Build string array listing repository options
+            [string[]] $PinnedRepoHeader = @(
+                "$($Pinned.Count) pinned repositories found"
+                ""
+            )
+
+            Show-Menu -HeaderLines 2 -SlashForBack -MenuLines ($PinnedRepoHeader + $Pinned)
+            if ($MenuChoice -in "/") {
+                #Go back
+                $MenuAddress = 1000
+                break ChoosePinnedRepositoryMenu
             }
 
-            #Check it doesn't already exist
-            foreach ($pin in $Pinned) {
-                if ($pin -like $p) {
-                    Write-host ""
-                    Write-host "Repository $p is already pinned!"
-                    Write-host ""
-                    pause
-                    $i++
-                    continue PinRepositoryMenuRetry
-                }
-            }
-
-            #In case you're just setting this up in advance or something
-            Show-Menu -HeaderLines 2 -MenuLines @(
-                "Would you like to test the repository at $p before pinning it?"
+            #Try and open the repo
+            $p = $Pinned[($MenuChoice - 1)]
+            Open-Repo $p
+            if ($RepoOpened -eq $true) {
+                $MenuAddress = 1700 #RepositoryOperationMenu
+            #Ask to remove pins if they have failed to open
+            } else {
+                Show-Menu -HeaderLines 2 -MenuLines @(
+                "Failed to open $p!  Would you like to unpin it?"
                 ""
                 "Yes"
                 "No"
-            )
-            if ($MenuChoice -eq 1){
-                Open-Repo $p
-                $i++
-            }
-            if ($MenuChoice -eq 2 -or $RepoOpened -eq $true) {
-                Pin-Repository $p
-                break PinRepositoryMenuRetry
+                )
+                if ($MenuChoice -eq 1) {Unpin-Repository $p}
             }
         }
-        $MenuAddress = 1000 #TopRepositoryMenu
-    }
 
-    :UnpinRepositoryMenu while ($MenuAddress -eq 1300) {
-        #Go back up a level if there's nothing to show
-        if ($Pinned.count -lt 1) {
-            Write-host "No pinned repos found"
-            write-host ""
-            pause
-            write-host ""
+        :PinRepositoryMenu while ($MenuAddress -eq 1200) {
+            $i = 0
+            :PinRepositoryMenuRetry while ($i -lt $Options.Retries -and $RepoOpened -eq $false) {
+                cls
+                Write-host "Please enter the path to the repository you would like to pin:"
+                $p = Read-Host
+
+                #Confirm local drive paths are syntactically valid
+                if ($p -match '^[a-z,A-Z]{1}:\\') {
+                    $q = Validate-WinPath $p
+                    if ($q[0] -eq $true) {
+                        $p = $q[1]
+                    } else {
+                        Write-host ""
+                        Write-host "Please enter a valid path"
+                        Write-host ""
+                        pause
+                        $i++
+                        continue
+                    }
+                }
+
+                #Check it doesn't already exist
+                foreach ($pin in $Pinned) {
+                    if ($pin -like $p) {
+                        Write-host ""
+                        Write-host "Repository $p is already pinned!"
+                        Write-host ""
+                        pause
+                        $i++
+                        continue PinRepositoryMenuRetry
+                    }
+                }
+
+                #In case you're just setting this up in advance or something
+                Show-Menu -HeaderLines 2 -MenuLines @(
+                    "Would you like to test the repository at $p before pinning it?"
+                    ""
+                    "Yes"
+                    "No"
+                )
+                if ($MenuChoice -eq 1){
+                    Open-Repo $p
+                    $i++
+                }
+                if ($MenuChoice -eq 2 -or $RepoOpened -eq $true) {
+                    Pin-Repository $p
+                    break PinRepositoryMenuRetry
+                }
+            }
+            $MenuAddress = 1000 #TopRepositoryMenu
+        }
+
+        :UnpinRepositoryMenu while ($MenuAddress -eq 1300) {
+            #Go back up a level if there's nothing to show
+            if ($Pinned.count -lt 1) {
+                Write-host "No pinned repos found"
+                write-host ""
+                pause
+                write-host ""
+                $MenuAddress = 1000 #TopRepositoryMenu
+                break UnpinRepositoryMenu
+            }
+            #Build string array listing repository options
+            [string[]] $PinnedRepoHeader = @(
+                "Select a repository to unpin"
+                ""
+            )
+            #Select Repository
+            Show-Menu -HeaderLines 2 -SlashForBack -MenuLines ($PinnedRepoHeader + $Pinned)
+            if ($MenuChoice -in "/") {
+                #Go back
+                $MenuAddress = 1000
+                break ChoosePinnedRepositoryMenu
+            }
+            #Confirm removal
+            if ($MenuChoice -is [int]) {
+                $r = $Pinned[($MenuChoice - 1)]
+                Pin-ConformationMenu -Path $r -Unpin
+            }
+            #Go back up either way
             $MenuAddress = 1000 #TopRepositoryMenu
             break UnpinRepositoryMenu
         }
-        #Build string array listing repository options
-        [string[]] $PinnedRepoHeader = @(
-            "Select a repository to unpin"
-            ""
-        )
-        #Select Repository
-        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines ($PinnedRepoHeader + $Pinned)
-        if ($MenuChoice -in "/") {
-            #Go back
-            $MenuAddress = 1000
-            break ChoosePinnedRepositoryMenu
-        }
-        #Confirm removal
-        if ($MenuChoice -is [int]) {
-            $r = $Pinned[($MenuChoice - 1)]
-            Pin-ConformationMenu -Path $r -Unpin
-        }
-        #Go back up either way
-        $MenuAddress = 1000 #TopRepositoryMenu
-        break UnpinRepositoryMenu
-    }
 
-    :EnterRepositoryManuallyMenu while ($MenuAddress -eq 1400) {
-        $i = 0
-        while ($i -lt $Options.Retries -and $RepoOpened -eq $false) {
-            cls
-            Write-host "Please enter the path to the repository:"
-            $p = Read-Host
-            Open-Repo $p
-            $i++
-        }
-        if ($RepoOpened -eq $true) {
-            $MenuAddress = 1700 #RepositoryOperationMenu
-        } else {
-            $MenuAddress = 1000 #Back to top repo menu
-        }
-    }
-
-    :CreateRepositoryMenu while ($MenuAddress -eq 1500) {
-        Create-Repo
-        $MenuAddress = 1000
-    }
-
-    :RepositoryOperationMenu while ($MenuAddress -eq 1700) {
-        #Check if repo path is already pinned and add option to do the reverse
-        $AlreadyPinned = $null
-        $PinOrUnpin = ""
-        foreach ($repo in $Pinned) {
-            if ($RepoPath -like $repo) {
-                $AlreadyPinned = $true
-                break
-            }
-            $AlreadyPinned = $false
-        }
-        if ($AlreadyPinned -eq $true) {
-            $PinOrUnpin = "Unpin this repository"
-        } else {
-            $PinOrUnpin = "Pin this repository"
-        }
-
-        #Now we get to the menu
-        Show-Menu -HeaderLines 3 -SlashForBack -MenuLines @(
-            "$($RepoInfo.repo_path)"
-            "Repository ID $($RepoInfo.id)"
-            ""
-            "Get repository stats"
-            "Check repository integrity"
-            "Work with snapshots"
-            "$PinOrUnpin"
-            "Prune old data"
-            "Return to main menu"
-            "Exit"
-        )
-        switch ($MenuChoice) {
-            1 {
-                Gen-RepoStats
+        :EnterRepositoryManuallyMenu while ($MenuAddress -eq 1400) {
+            $i = 0
+            while ($i -lt $Options.Retries -and $RepoOpened -eq $false) {
                 cls
-                Write-Host $RepoPath
-                $RepoStats|fl
-                pause
+                Write-host "Please enter the path to the repository:"
+                $p = Read-Host
+                Open-Repo $p
+                $i++
             }
-            2 {$MenuAddress = 1720} #CheckRepositoryMenu
-            3 {$MenuAddress = 1710} #SnapshotSelectionMenu
-            4 {
-                if ($AlreadyPinned -eq $true) {
-                #Confirm unpinning and then go back up a level
-                    Pin-ConformationMenu -Path $RepoPath -Unpin
-                    if ($RepoPath -notin $Pinned) {
-                        $MenuAddress = 1000 #TopRepositoryMenu
-                        break RepositoryOperationMenu
-                    }
-                #Or just confirm and pin
-                } else {
-                    Pin-ConformationMenu -Path $RepoPath -Pin
-                }
+            if ($RepoOpened -eq $true) {
+                $MenuAddress = 1700 #RepositoryOperationMenu
+            } else {
+                $MenuAddress = 1000 #Back to top repo menu
             }
-            5 {$MenuAddress = 1770} #PruneRepositoryData
-            6 {$MenuAddress = 0} #MainMenu
-            7 {exit}
-            "/" {$MenuAddress = 1000} #TopRepositoryMenu
         }
-        break
-    }
 
-    :SnapshotSelectionMenu while ($MenuAddress -eq 1710) {
-        #Clear changes that could be cause by deeper menus
-        $RestoreFromQueue.Clear()
-        Gen-Snapshots
+        :CreateRepositoryMenu while ($MenuAddress -eq 1500) {
+            Create-Repo
+            $MenuAddress = 1000
+        }
 
-        if ($Snapshots.count -eq 0) {
-            cls
-            Write-Host "No snapshots found in $RepoPath!"
-            pause
-            $MenuAddress = 1000 #TopRepositoryMenu
+        :RepositoryOperationMenu while ($MenuAddress -eq 1700) {
+            #Check if repo path is already pinned and add option to do the reverse
+            $AlreadyPinned = $null
+            $PinOrUnpin = ""
+            foreach ($repo in $Pinned) {
+                if ($RepoPath -like $repo) {
+                    $AlreadyPinned = $true
+                    break
+                }
+                $AlreadyPinned = $false
+            }
+            if ($AlreadyPinned -eq $true) {
+                $PinOrUnpin = "Unpin this repository"
+            } else {
+                $PinOrUnpin = "Pin this repository"
+            }
+
+            #Now we get to the menu
+            Show-Menu -HeaderLines 3 -SlashForBack -MenuLines @(
+                "$($RepoInfo.repo_path)"
+                "Repository ID $($RepoInfo.id)"
+                ""
+                "Get repository stats"
+                "Check repository integrity"
+                "Work with snapshots"
+                "$PinOrUnpin"
+                "Prune old data"
+                "Return to main menu"
+                "Exit"
+            )
+            switch ($MenuChoice) {
+                1 {
+                    Gen-RepoStats
+                    cls
+                    Write-Host $RepoPath
+                    $RepoStats|fl
+                    pause
+                }
+                2 {$MenuAddress = 1720} #CheckRepositoryMenu
+                3 {$MenuAddress = 1710} #SnapshotSelectionMenu
+                4 {
+                    if ($AlreadyPinned -eq $true) {
+                    #Confirm unpinning and then go back up a level
+                        Pin-ConformationMenu -Path $RepoPath -Unpin
+                        if ($RepoPath -notin $Pinned) {
+                            $MenuAddress = 1000 #TopRepositoryMenu
+                            break RepositoryOperationMenu
+                        }
+                    #Or just confirm and pin
+                    } else {
+                        Pin-ConformationMenu -Path $RepoPath -Pin
+                    }
+                }
+                5 {$MenuAddress = 1770} #PruneRepositoryData
+                6 {$MenuAddress = 0} #MainMenu
+                7 {Clean-Exit}
+                "/" {$MenuAddress = 1000} #TopRepositoryMenu
+            }
             break
         }
 
-        Show-Menu -HeaderLines 2 -IndentHeader -FooterLines 4 -IndentFooter -SlashForBack -MenuLines @(
-            $Snapshots + "" + "Enter a snapshot's number"
-        )
+        :SnapshotSelectionMenu while ($MenuAddress -eq 1710) {
+            #Clear changes that could be cause by deeper menus
+            $RestoreFromQueue.Clear()
+            Gen-Snapshots
 
-        if ($MenuChoice -in "/") {
-            $MenuAddress = 1700 #RepositoryOperationMenu
-        } else {
-            $SnapID = $SnapIDs[$MenuChoice - 1]
-            $MenuAddress = 1715 #SnapshotOperationsMenu
+            if ($Snapshots.count -eq 0) {
+                cls
+                Write-Host "No snapshots found in $RepoPath!"
+                pause
+                $MenuAddress = 1000 #TopRepositoryMenu
+                break
+            }
+
+            Show-Menu -HeaderLines 2 -IndentHeader -FooterLines 4 -IndentFooter -SlashForBack -MenuLines @(
+                $Snapshots + "" + "Enter a snapshot's number"
+            )
+
+            if ($MenuChoice -in "/") {
+                $MenuAddress = 1700 #RepositoryOperationMenu
+            } else {
+                $SnapID = $SnapIDs[$MenuChoice - 1]
+                $MenuAddress = 1715 #SnapshotOperationsMenu
+            }
+            break SnapshotSelectionMenu
         }
-        break SnapshotSelectionMenu
-    }
 
-    :SnapshotOperationsMenu while ($MenuAddress -eq 1715) {
-        #Clear changes that could be cause by deeper menus
-        $RestoreFromQueue.Clear()
-        #Generate data
-        Get-SnapshotStats
-        Format-SnapshotStats
+        :SnapshotOperationsMenu while ($MenuAddress -eq 1715) {
+            #Clear changes that could be cause by deeper menus
+            $RestoreFromQueue.Clear()
+            #Generate data
+            Get-SnapshotStats
+            Format-SnapshotStats
 
-        #Build menu
-        [string[]]$m = @()
-        $m += "Snapshot Stats"
-        $m += ""
-        $m += $SnapshotStatsFormatted
-        $m += ""
-        $m += "Browse/restore from this snapshot"
-        $m += "Jump to path in this snapshot"
-        $m += "Forget this snapshot"
-        $m += "Edit this snapshot's tags"
+            #Build menu
+            [string[]]$m = @()
+            $m += "Snapshot Stats"
+            $m += ""
+            $m += $SnapshotStatsFormatted
+            $m += ""
+            $m += "Browse/restore from this snapshot"
+            $m += "Jump to path in this snapshot"
+            $m += "Forget this snapshot"
+            $m += "Edit this snapshot's tags"
 
-        Show-Menu -HeaderLines 18 -SlashForBack -MenuLines $m
+            Show-Menu -HeaderLines 18 -SlashForBack -MenuLines $m
 
-        switch ($MenuChoice) {
-            1 {$MenuAddress = 1800} #BrowseAndRestoreMenu
-            2 {
-                if (Jump-ToSnapshotPath) {
-                    $MenuAddress = 1800
-                    $KeepPage = $true
+            switch ($MenuChoice) {
+                1 {$MenuAddress = 1800} #BrowseAndRestoreMenu
+                2 {
+                    if (Jump-ToSnapshotPath) {
+                        $MenuAddress = 1800
+                        $KeepPage = $true
+                    }
                 }
-            }
-            3 {
-                Forget-Snapshot $SnapID
-                $MenuAddress = 1710 #SnapshotSelectionMenu
-            }
-            4 {$MenuAddress = 1760} #EditSnapshotTagsMenu
-            default {$MenuAddress = 1710} #SnapshotSelectionMenu
-        }
-        break SnapshotOperationsMenu
-    }
-
-    :CheckRepositoryMenu while ($MenuAddress -eq 1720) {
-        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
-            "Repo ID $($RepoInfo.id) at $($RepoInfo.repo_path) selected"
-            ""
-            "Check repository metadata integrity"
-            "Check repository metadata and data integrity"
-        )
-        switch ($MenuChoice) {
-            1 {$MenuAddress = 1740} #ConfirmCheckRepositoryMetadataOnlyMenu
-            2 {$MenuAddress = 1730} #CheckRepositoryDataTypeMenu
-            "/" {$MenuAddress = 1700} #RepositoryOperationMenu
-        }
-        break CheckRepositoryMenu
-    }
-
-    :CheckRepositoryDataTypeMenu while ($MenuAddress -eq 1730) {
-        Show-Menu -HeaderLines 2 -MenuLines @(
-            "Select data to check in repository ID $($RepoInfo.id) at path $RepoPath"
-            ""
-            "Check all data"
-            "Specify a percentage of total repository data to check at random"
-            "Specify a fixed amount of repository data to check at random"
-        )
-        #Build command line arguments in $RepoCheckCommand
-        switch ($MenuChoice) {
-            1 {
-                $RepoCheckCommand = "--read-data"
-                $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
-                break CheckRepositoryDataTypeMenu
-            }
-            2 {
-                Write-Host "What percentage of data would you like to check?"
-                $n = Read-Host
-                $n = $n.Trim("%")
-                if ((Validate-Decimal $n) -and (Validate-Percentage -number $n -Hundred)) {
-                    $RepoCheckCommand = "--read-data-subset=$($n)%"
-                    $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
-                    break CheckRepositoryDataTypeMenu
-                } else {
-                    Write-Host "Entry could not be parsed as a percentage!"
-                    pause
+                3 {
+                    Forget-Snapshot $SnapID
+                    $MenuAddress = 1710 #SnapshotSelectionMenu
                 }
+                4 {$MenuAddress = 1760} #EditSnapshotTagsMenu
+                default {$MenuAddress = 1710} #SnapshotSelectionMenu
             }
-            3 {
-                Write-Host "How much data would you like to read?"
-                Write-Host "Integer plus single letter size suffix, i.e. 10G"
-                $n = Read-Host
-                if ((Validate-DataSize -string $n -bytes $false) -ne $false) {
-                    $RepoCheckCommand = "--read-data-subset=$($n)"
-                    $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
-                    break CheckRepositoryDataTypeMenu
-                } else {
-                    Write-Host "Entry could not be parsed correctly!"
-                    pause
-                }
+            break SnapshotOperationsMenu
+        }
+
+        :CheckRepositoryMenu while ($MenuAddress -eq 1720) {
+            Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
+                "Repo ID $($RepoInfo.id) at $($RepoInfo.repo_path) selected"
+                ""
+                "Check repository metadata integrity"
+                "Check repository metadata and data integrity"
+            )
+            switch ($MenuChoice) {
+                1 {$MenuAddress = 1740} #ConfirmCheckRepositoryMetadataOnlyMenu
+                2 {$MenuAddress = 1730} #CheckRepositoryDataTypeMenu
+                "/" {$MenuAddress = 1700} #RepositoryOperationMenu
             }
+            break CheckRepositoryMenu
         }
-    }
 
-    :ConfirmCheckRepositoryMetadataOnlyMenu while ($MenuAddress -eq 1740) {
-        Show-Menu -HeaderLines 2 -MenuLines @(
-            "Check metadata of repository ID $($RepoInfo.id) at path $RepoPath ?"
-            ""
-            "Yes"
-            "No"
-        )
-        if ($MenuChoice -eq 1) {
-            cls
-            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check -vv"
-            $c = Append-RepoTypeOptions "$c" "$RepoPath"
-            cmd /c $c
-            pause
-        }
-        $MenuAddress = 1700 #RepositoryOperationMenu
-        break ConfirmCheckRepositoryMetadataOnlyMenu
-    }
-
-    :ConfirmCheckRepositoryFileDataMenu while ($MenuAddress -eq 1750) {
-        #Get amount of data text for menu
-        if ($($RepoCheckCommand.split("=")).count -eq 1) {
-            $a = "ALL"
-        } else {
-            $a = "$($RepoCheckCommand.split("=")[1]) of"
-        }
-        Show-Menu -HeaderLines 2 -MenuLines @(
-            "Do you want to check $a data in repository ID $($RepoInfo.id) at path $RepoPath"
-            ""
-            "Yes"
-            "No"
-        )
-        if ($MenuChoice -eq 1) {
-            cls
-            $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check $RepoCheckCommand -vv"
-            $c = Append-RepoTypeOptions "$c" "$RepoPath"
-            cmd /c $c
-            pause
-        }
-        $MenuAddress = 1700 #RepositoryOperationMenu
-        break ConfirmCheckRepositoryFileDataMenu
-    }
-
-    :EditSnapshotTagsMenu while ($MenuAddress -eq 1760) {
-        [string[]]$m = @()
-        $m += "Edit tags for the following snapshot"
-        $m += ""
-        $m += $SnapshotStatsFormatted
-        $m += ""
-        $m += "Add a tag"
-        $m += "Remove a tag"
-        $m += "Clear all tags"
-
-        Show-Menu -HeaderLines 18 -SlashForBack -MenuLines $m
-        switch ($MenuChoice) {
-            1 {Add-SnapshotTag}
-            2 {Remove-SnapshotTag}
-            3 {Clear-SnapshotTags}
-            "/" {
-                $MenuAddress = 1715
-                break EditSnapshotTagsMenu
-            }
-        }
-        #Find the new ID and display the updated data after changes have been made
-        Find-ChangedSnapshot
-        Get-SnapshotStats
-        Format-SnapshotStats
-    }
-
-    :PruneRepositoryData while ($MenuAddress -eq 1770) {
-        Show-Menu -HeaderLines 2 -MenuLines @(
-            "Prune unused data in repository at $($RepoPath)?"
-            ""
-            "Yes"
-            "No"
-        )
-        if ($MenuChoice -eq 1) {
+        :CheckRepositoryDataTypeMenu while ($MenuAddress -eq 1730) {
             Show-Menu -HeaderLines 2 -MenuLines @(
-                "Perform prune as a dry run?"
+                "Select data to check in repository ID $($RepoInfo.id) at path $RepoPath"
+                ""
+                "Check all data"
+                "Specify a percentage of total repository data to check at random"
+                "Specify a fixed amount of repository data to check at random"
+            )
+            #Build command line arguments in $RepoCheckCommand
+            switch ($MenuChoice) {
+                1 {
+                    $RepoCheckCommand = "--read-data"
+                    $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
+                    break CheckRepositoryDataTypeMenu
+                }
+                2 {
+                    Write-Host "What percentage of data would you like to check?"
+                    $n = Read-Host
+                    $n = $n.Trim("%")
+                    if ((Validate-Decimal $n) -and (Validate-Percentage -number $n -Hundred)) {
+                        $RepoCheckCommand = "--read-data-subset=$($n)%"
+                        $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
+                        break CheckRepositoryDataTypeMenu
+                    } else {
+                        Write-Host "Entry could not be parsed as a percentage!"
+                        pause
+                    }
+                }
+                3 {
+                    Write-Host "How much data would you like to read?"
+                    Write-Host "Integer plus single letter size suffix, i.e. 10G"
+                    $n = Read-Host
+                    if ((Validate-DataSize -string $n -bytes $false) -ne $false) {
+                        $RepoCheckCommand = "--read-data-subset=$($n)"
+                        $MenuAddress = 1750 #ConfirmCheckRepositoryFileDataMenu
+                        break CheckRepositoryDataTypeMenu
+                    } else {
+                        Write-Host "Entry could not be parsed correctly!"
+                        pause
+                    }
+                }
+            }
+        }
+
+        :ConfirmCheckRepositoryMetadataOnlyMenu while ($MenuAddress -eq 1740) {
+            Show-Menu -HeaderLines 2 -MenuLines @(
+                "Check metadata of repository ID $($RepoInfo.id) at path $RepoPath ?"
                 ""
                 "Yes"
                 "No"
             )
             if ($MenuChoice -eq 1) {
-                Prune-Repo -DryRun
-            } else {
-                Prune-Repo
+                cls
+                $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check -vv"
+                $c = Append-RepoTypeOptions "$c" "$RepoPath"
+                cmd /c $c
+                pause
             }
+            $MenuAddress = 1700 #RepositoryOperationMenu
+            break ConfirmCheckRepositoryMetadataOnlyMenu
         }
-        $MenuAddress = 1700
-        break PruneRepositoryData
-    }
 
-    :BrowseAndRestoreMenu while ($MenuAddress -eq 1800) {
-        #Reads and displays contents  of a snapshot.  Starts at the snapshot's root and lets the user drill
-        #down to lower level directories and files with options to view info and restore single files or
-        #entire folders
+        :ConfirmCheckRepositoryFileDataMenu while ($MenuAddress -eq 1750) {
+            #Get amount of data text for menu
+            if ($($RepoCheckCommand.split("=")).count -eq 1) {
+                $a = "ALL"
+            } else {
+                $a = "$($RepoCheckCommand.split("=")[1]) of"
+            }
+            Show-Menu -HeaderLines 2 -MenuLines @(
+                "Do you want to check $a data in repository ID $($RepoInfo.id) at path $RepoPath"
+                ""
+                "Yes"
+                "No"
+            )
+            if ($MenuChoice -eq 1) {
+                cls
+                $c = "$(Quote-Path($script:ResticPath))" + " -r $(Quote-Path($RepoPath))" + "$script:RepoPasswordCommand" + " check $RepoCheckCommand -vv"
+                $c = Append-RepoTypeOptions "$c" "$RepoPath"
+                cmd /c $c
+                pause
+            }
+            $MenuAddress = 1700 #RepositoryOperationMenu
+            break ConfirmCheckRepositoryFileDataMenu
+        }
 
-        #Get root path when initially entering menu, skip if circling back with $KeepPage
-        if ($KeepPage -eq $false) {Check-RootFolderPath}
-        #Cycle though menu
-        #Break :KeepFolderData after generating data about a new choice so :RefreshFolderData will resort it
-        :RefreshFolderData while ($true) {
-                Sort-FolderData
-                Format-FolderDirsFiles
-            :KeepFolderData while($true) {
-                #Display the menu, remember long menus are nested within Split-Menu
-                Show-Menu -HeaderLines 3 -FooterLines 2 -RestoreFolderMenu -AllowEnter -MenuLines $FolderLines
-                #################################
-                #Exit to snapshot selection menu
-                #################################
-                if ($MenuChoice -in @("/")) {
-                    #Check if items are queued for restore and ask to confirm exit if there are any
-                    Confirm-ExitRestore
-                    #Exit choices from previous menus
-                    if ($MenuChoice -in 1,"/") {
-                        $MenuAddress = 1715 #SnapshotOperationsMenu
-                    #Restore queued items
-                    } elseif ($MenuChoice -eq 2) {
-                        $MenuAddress = 1840 #RestoreQueueDestinationMenu
-                        $KeepPage = $true
-                    #Go back to last page if not exiting or restoring
-                    } elseif ($MenuChoice -eq 3) {
-                        $KeepPage = $true
-                    }
-                    break BrowseAndRestoreMenu
-                ##############
-                #Pop directory
-                ##############
-                } elseif ($MenuChoice -in @("-")) {
-                    if ((Pop-NixDirectory($FolderPath)) -eq "") {
-                        write-host ""
-                        write-host "Already at root!"
-                        write-host ""
-                        Pause
-                    } else {
-                        $FolderPath = Pop-NixDirectory($FolderPath)
-                        Gen-FolderData
-                    }
-                    break KeepFolderData
-                ###################################
-                #Get full data about current folder
-                ###################################
-                } elseif ($MenuChoice -in @(".")) {
-                    $KeepPage = $true
-                    Gen-FolderDataRecursive
-                    Format-FolderDetails
-                    Show-FolderDetails
-                    #Restore options
-                    switch ($MenuChoice) {
-                        #Add to list of items to restore
-                        1 {Queue-ForRestore $FolderData[1]}
-                        #Restore this single item now
-                        2 {
-                            $RestoreFromSingle = $FolderData[1]
+        :EditSnapshotTagsMenu while ($MenuAddress -eq 1760) {
+            [string[]]$m = @()
+            $m += "Edit tags for the following snapshot"
+            $m += ""
+            $m += $SnapshotStatsFormatted
+            $m += ""
+            $m += "Add a tag"
+            $m += "Remove a tag"
+            $m += "Clear all tags"
+
+            Show-Menu -HeaderLines 18 -SlashForBack -MenuLines $m
+            switch ($MenuChoice) {
+                1 {Add-SnapshotTag}
+                2 {Remove-SnapshotTag}
+                3 {Clear-SnapshotTags}
+                "/" {
+                    $MenuAddress = 1715
+                    break EditSnapshotTagsMenu
+                }
+            }
+            #Find the new ID and display the updated data after changes have been made
+            Find-ChangedSnapshot
+            Get-SnapshotStats
+            Format-SnapshotStats
+        }
+
+        :PruneRepositoryData while ($MenuAddress -eq 1770) {
+            Show-Menu -HeaderLines 2 -MenuLines @(
+                "Prune unused data in repository at $($RepoPath)?"
+                ""
+                "Yes"
+                "No"
+            )
+            if ($MenuChoice -eq 1) {
+                Show-Menu -HeaderLines 2 -MenuLines @(
+                    "Perform prune as a dry run?"
+                    ""
+                    "Yes"
+                    "No"
+                )
+                if ($MenuChoice -eq 1) {
+                    Prune-Repo -DryRun
+                } else {
+                    Prune-Repo
+                }
+            }
+            $MenuAddress = 1700
+            break PruneRepositoryData
+        }
+
+        :BrowseAndRestoreMenu while ($MenuAddress -eq 1800) {
+            #Reads and displays contents  of a snapshot.  Starts at the snapshot's root and lets the user drill
+            #down to lower level directories and files with options to view info and restore single files or
+            #entire folders
+
+            #Get root path when initially entering menu, skip if circling back with $KeepPage
+            if ($KeepPage -eq $false) {Check-RootFolderPath}
+            #Cycle though menu
+            #Break :KeepFolderData after generating data about a new choice so :RefreshFolderData will resort it
+            :RefreshFolderData while ($true) {
+                    Sort-FolderData
+                    Format-FolderDirsFiles
+                :KeepFolderData while($true) {
+                    #Display the menu, remember long menus are nested within Split-Menu
+                    Show-Menu -HeaderLines 3 -FooterLines 2 -RestoreFolderMenu -AllowEnter -MenuLines $FolderLines
+                    #################################
+                    #Exit to snapshot selection menu
+                    #################################
+                    if ($MenuChoice -in @("/")) {
+                        #Check if items are queued for restore and ask to confirm exit if there are any
+                        Confirm-ExitRestore
+                        #Exit choices from previous menus
+                        if ($MenuChoice -in 1,"/") {
+                            $MenuAddress = 1715 #SnapshotOperationsMenu
+                        #Restore queued items
+                        } elseif ($MenuChoice -eq 2) {
+                            $MenuAddress = 1840 #RestoreQueueDestinationMenu
                             $KeepPage = $true
-                            $MenuAddress = 1810 #RestoreSingleItemDestinationMenu
-                            break BrowseAndRestoreMenu
-                        }
-                        #Quick restore to original location
-                        3 {
-                            $RestoreFromSingle = $FolderData[1]
+                        #Go back to last page if not exiting or restoring
+                        } elseif ($MenuChoice -eq 3) {
                             $KeepPage = $true
-                            $MenuAddress = 1805 #ConfirmQuickRestore
-                            break BrowseAndRestoreMenu
                         }
-                    }
-                #####################
-                #Restore queued items
-                #####################
-                } elseif ($MenuChoice -in @("*")) {
-                    $KeepPage = $true
-                    $MenuAddress = 1840 #RestoreQueueDestinationMenu
-                    break BrowseAndRestoreMenu
-                ####################
-                #Choosing a new item
-                ####################
-                } elseif ($MenuChoice -is [int]) {
-                    $MenuChoice = $MenuChoice - 1 #array offset
-                    $BrowseChoice = $FolderDirsAndFiles[$MenuChoice]
-                    #Drill into chosen directory
-                    if ($BrowseChoice.type -eq "dir") {
-                        Drill-Directory
+                        break BrowseAndRestoreMenu
+                    ##############
+                    #Pop directory
+                    ##############
+                    } elseif ($MenuChoice -in @("-")) {
+                        if ((Pop-NixDirectory($FolderPath)) -eq "") {
+                            write-host ""
+                            write-host "Already at root!"
+                            write-host ""
+                            Pause
+                        } else {
+                            $FolderPath = Pop-NixDirectory($FolderPath)
+                            Gen-FolderData
+                        }
                         break KeepFolderData
-                    #Display file info
-                    } elseif ($BrowseChoice.type -eq "file") {
+                    ###################################
+                    #Get full data about current folder
+                    ###################################
+                    } elseif ($MenuChoice -in @(".")) {
                         $KeepPage = $true
-                        Gen-FileDetails
-                        Show-FileDetails
+                        Gen-FolderDataRecursive
+                        Format-FolderDetails
+                        Show-FolderDetails
                         #Restore options
                         switch ($MenuChoice) {
-                        #Add to list of items to restore
-                            1 {Queue-ForRestore $BrowseChoice}
-                        #Restore this single item now
+                            #Add to list of items to restore
+                            1 {Queue-ForRestore $FolderData[1]}
+                            #Restore this single item now
                             2 {
-                                $RestoreFromSingle = $BrowseChoice
+                                $RestoreFromSingle = $FolderData[1]
                                 $KeepPage = $true
                                 $MenuAddress = 1810 #RestoreSingleItemDestinationMenu
                                 break BrowseAndRestoreMenu
                             }
                             #Quick restore to original location
                             3 {
-                                $RestoreFromSingle = $BrowseChoice
+                                $RestoreFromSingle = $FolderData[1]
                                 $KeepPage = $true
                                 $MenuAddress = 1805 #ConfirmQuickRestore
                                 break BrowseAndRestoreMenu
                             }
                         }
+                    #####################
+                    #Restore queued items
+                    #####################
+                    } elseif ($MenuChoice -in @("*")) {
+                        $KeepPage = $true
+                        $MenuAddress = 1840 #RestoreQueueDestinationMenu
+                        break BrowseAndRestoreMenu
+                    ####################
+                    #Choosing a new item
+                    ####################
+                    } elseif ($MenuChoice -is [int]) {
+                        $MenuChoice = $MenuChoice - 1 #array offset
+                        $BrowseChoice = $FolderDirsAndFiles[$MenuChoice]
+                        #Drill into chosen directory
+                        if ($BrowseChoice.type -eq "dir") {
+                            Drill-Directory
+                            break KeepFolderData
+                        #Display file info
+                        } elseif ($BrowseChoice.type -eq "file") {
+                            $KeepPage = $true
+                            Gen-FileDetails
+                            Show-FileDetails
+                            #Restore options
+                            switch ($MenuChoice) {
+                            #Add to list of items to restore
+                                1 {Queue-ForRestore $BrowseChoice}
+                            #Restore this single item now
+                                2 {
+                                    $RestoreFromSingle = $BrowseChoice
+                                    $KeepPage = $true
+                                    $MenuAddress = 1810 #RestoreSingleItemDestinationMenu
+                                    break BrowseAndRestoreMenu
+                                }
+                                #Quick restore to original location
+                                3 {
+                                    $RestoreFromSingle = $BrowseChoice
+                                    $KeepPage = $true
+                                    $MenuAddress = 1805 #ConfirmQuickRestore
+                                    break BrowseAndRestoreMenu
+                                }
+                            }
+                        }
                     }
                 }
             }
+            break BrowseAndRestoreMenu
         }
-        break BrowseAndRestoreMenu
-    }
 
-    :ConfirmQuickRestore while ($MenuAddress -eq 1805) {
-        #Resets options for quick restore and gives one last chance change your mind if option is set
+        :ConfirmQuickRestore while ($MenuAddress -eq 1805) {
+            #Resets options for quick restore and gives one last chance change your mind if option is set
 
-        $RestoreTo = ""
-        $RestoreOverwriteOption = [RestoreOverwriteOption]::Different
-        $RestoreDeleteOption = $false
-        $RestoreDryRunOption = $false
+            $RestoreTo = ""
+            $RestoreOverwriteOption = [RestoreOverwriteOption]::Different
+            $RestoreDeleteOption = $false
+            $RestoreDryRunOption = $false
 
-        if ($Options.QuickRestoreConfirm -eq 1) {
-            Show-Menu -HeaderLines 4 -MenuLines @(
-                "Restore $($RestoreFromSingle.name) to original location?"
-                "$(Get-RestoreOptionsWarningString)"
-                "$(Get-RestoreDryRunWarningString)"
-                ""
-                "Yes"
-                "No"
-            )
-        }
-        if ($MenuChoice -eq 1 -or $Options.QuickRestoreConfirm -eq 0) {
-            Restore-Item
-            pause
-        }
-        $MenuAddress = 1800
-        break ConfirmQuickRestore
-    }
-
-    :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810) {
-        #Pick destination for a single item chosen for restore
-
-        Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
-            "$(Convert-NixPathToWin($RestoreFromSingle.path)) selected"
-            ""
-            "Restore to original location"
-            "Browse other restore location"
-            "Enter restore location manually"
-        )
-        #Set $RestoreTo and move on to next menu
-        switch ($MenuChoice) {
-            1 {
-                $RestoreTo = "" #Empty string is interpreted as the original location
-                $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
-                break RestoreSingleItemDestinationMenu
+            if ($Options.QuickRestoreConfirm -eq 1) {
+                Show-Menu -HeaderLines 4 -MenuLines @(
+                    "Restore $($RestoreFromSingle.name) to original location?"
+                    "$(Get-RestoreOptionsWarningString)"
+                    "$(Get-RestoreDryRunWarningString)"
+                    ""
+                    "Yes"
+                    "No"
+                )
             }
-            2 {
-                $p = Browse-RestoreToPath
-                if ($p -eq $null) { #$null if Browse-RestoreToPath is exited
-                    break RestoreSingleItemDestinationMenu
-                } else {
-                    $RestoreTo = $p
-                    $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
-                    break RestoreSingleItemDestinationMenu
-                }
-            }
-            3 {
-                $p = Read-WinPath
-                if ($p -ne "") { #Read-WinPath returns an empty string after retries are used up.
-                    $RestoreTo = $p
-                    $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
-                    break RestoreSingleItemDestinationMenu
-                } else {
-                    break RestoreSingleItemDestinationMenu
-                }
-            }
-        }
-        $MenuAddress = 1800 #BrowseAndRestoreMenu
-        break RestoreSingleItemDestinationMenu
-    }
-
-    :RestoreSingleItemOptionsMenu while ($MenuAddress -eq 1820) {
-        #Sets options and moves on
-        Ask-RestoreOptions
-        Ask-DryRun
-        $MenuAddress = 1830 #ConfirmRestoreSingleItemMenu
-        break RestoreSingleItemOptionsMenu
-    }
-
-    :ConfirmRestoreSingleItemMenu while ($MenuAddress -eq 1830) {
-        #Displays restore option and confirms operation with user before running restore
-
-        #Build menu array
-        [string[]]$m = @()
-        #RestoreTo -eq "" means to original location
-        if ($RestoreTo -eq "") {
-            $m += "Restore $($RestoreFromSingle.name) to original location?"
-        } else {
-            $m += "Restore $($RestoreFromSingle.name) to $($RestoreTo)?"
-        }
-        $m += "$(Get-RestoreOptionsWarningString)" #Display these setting again for the user
-        $m += "$(Get-RestoreDryRunWarningString)"
-        $m += ""
-        $m += "Yes"
-        $m += "No"
-
-        Show-Menu -HeaderLines 4 -MenuLines $m
-
-        #Restore item and go back to BrowseAndRestoreMenu
-        if ($MenuChoice -eq 1) {
-            #This will change $RestoreDryRunOption to false if the user approves the results
-            if ($RestoreDryRunOption -eq $true) {
-                Restore-SingleItemDryRunMenu
-            }
-            #Skip real restore if $RestoreDryRunOption is not changed and go back to browse menu
-            if ($RestoreDryRunOption -eq $false) {
+            if ($MenuChoice -eq 1 -or $Options.QuickRestoreConfirm -eq 0) {
                 Restore-Item
                 pause
             }
+            $MenuAddress = 1800
+            break ConfirmQuickRestore
         }
 
-        $MenuAddress = 1800 #BrowseAndRestoreMenu
-        break ConfirmRestoreSingleItemMenu
-    }
+        :RestoreSingleItemDestinationMenu while ($MenuAddress -eq 1810) {
+            #Pick destination for a single item chosen for restore
 
-    :RestoreQueueDestinationMenu while ($MenuAddress -eq 1840) {
-        #Destination options for queued items as well checking and editing queue
+            Show-Menu -HeaderLines 2 -SlashForBack -MenuLines @(
+                "$(Convert-NixPathToWin($RestoreFromSingle.path)) selected"
+                ""
+                "Restore to original location"
+                "Browse other restore location"
+                "Enter restore location manually"
+            )
+            #Set $RestoreTo and move on to next menu
+            switch ($MenuChoice) {
+                1 {
+                    $RestoreTo = "" #Empty string is interpreted as the original location
+                    $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
+                    break RestoreSingleItemDestinationMenu
+                }
+                2 {
+                    $p = Browse-RestoreToPath
+                    if ($p -eq $null) { #$null if Browse-RestoreToPath is exited
+                        break RestoreSingleItemDestinationMenu
+                    } else {
+                        $RestoreTo = $p
+                        $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
+                        break RestoreSingleItemDestinationMenu
+                    }
+                }
+                3 {
+                    $p = Read-WinPath
+                    if ($p -ne "") { #Read-WinPath returns an empty string after retries are used up.
+                        $RestoreTo = $p
+                        $MenuAddress = 1820 #RestoreSingleItemOptionsMenu
+                        break RestoreSingleItemDestinationMenu
+                    } else {
+                        break RestoreSingleItemDestinationMenu
+                    }
+                }
+            }
+            $MenuAddress = 1800 #BrowseAndRestoreMenu
+            break RestoreSingleItemDestinationMenu
+        }
 
-        #Go back if the queue is empty
-        if (Check-RestoreFromQueueEmpty) {
-            Warn-RestoreFromQueueEmpty
+        :RestoreSingleItemOptionsMenu while ($MenuAddress -eq 1820) {
+            #Sets options and moves on
+            Ask-RestoreOptions
+            Ask-DryRun
+            $MenuAddress = 1830 #ConfirmRestoreSingleItemMenu
+            break RestoreSingleItemOptionsMenu
+        }
+
+        :ConfirmRestoreSingleItemMenu while ($MenuAddress -eq 1830) {
+            #Displays restore option and confirms operation with user before running restore
+
+            #Build menu array
+            [string[]]$m = @()
+            #RestoreTo -eq "" means to original location
+            if ($RestoreTo -eq "") {
+                $m += "Restore $($RestoreFromSingle.name) to original location?"
+            } else {
+                $m += "Restore $($RestoreFromSingle.name) to $($RestoreTo)?"
+            }
+            $m += "$(Get-RestoreOptionsWarningString)" #Display these setting again for the user
+            $m += "$(Get-RestoreDryRunWarningString)"
+            $m += ""
+            $m += "Yes"
+            $m += "No"
+
+            Show-Menu -HeaderLines 4 -MenuLines $m
+
+            #Restore item and go back to BrowseAndRestoreMenu
+            if ($MenuChoice -eq 1) {
+                #This will change $RestoreDryRunOption to false if the user approves the results
+                if ($RestoreDryRunOption -eq $true) {
+                    Restore-SingleItemDryRunMenu
+                }
+                #Skip real restore if $RestoreDryRunOption is not changed and go back to browse menu
+                if ($RestoreDryRunOption -eq $false) {
+                    Restore-Item
+                    pause
+                }
+            }
+
+            $MenuAddress = 1800 #BrowseAndRestoreMenu
+            break ConfirmRestoreSingleItemMenu
+        }
+
+        :RestoreQueueDestinationMenu while ($MenuAddress -eq 1840) {
+            #Destination options for queued items as well checking and editing queue
+
+            #Go back if the queue is empty
+            if (Check-RestoreFromQueueEmpty) {
+                Warn-RestoreFromQueueEmpty
+                $MenuAddress = 1800 #BrowseAndRestoreMenu
+                break RestoreQueueDestinationMenu
+            }
+
+            #Build menu array
+            [string[]]$m = @()
+            $m += "$($script:RestoreFromQueue.count) items selected"
+            $l = 2
+            #Check if items have overlapping paths that may overwrite each other and add warning if needed
+            if (Check-RestoreFromQueueConflict) {
+                $m += "WARNING: Some items chosen for restore have overlapping paths.  Continuing may lead to unexpected results."
+                $l++
+            }
+            $m += ""
+            $m += "Restore to original location"
+            $m += "Browse other restore location"
+            $m += "Enter restore location manually"
+            $m += "Review queued items"
+            $m += "Clear restore queue"
+
+            Show-Menu -HeaderLines $l -SlashForBack -MenuLines $m
+
+            switch ($MenuChoice) {
+                1 {
+                    $RestoreTo = "" #Empty string is interpreted as original location
+                    $MenuAddress = 1850 #RestoreQueueOptionsMenu
+                    break RestoreQueueDestinationMenu
+                }
+                2 {
+                    $p = Browse-RestoreToPath
+                    if ($p -eq $null) { #Browse-RestoreToPath returns $null if exited
+                        break RestoreQueueDestinationMenu
+                    } else {
+                        $RestoreTo = $p
+                        $MenuAddress = 1850 #RestoreQueueOptionsMenu
+                        break RestoreQueueDestinationMenu
+                    }
+                }
+                3 {
+                    $p = Read-WinPath
+                    if ($p -ne "") { #Read-WinPath returns $null after running out of retries
+                        $RestoreTo = $p
+                        $MenuAddress = 1850 #RestoreQueueOptionsMenu
+                        break RestoreQueueDestinationMenu
+                    } else {
+                        break RestoreQueueDestinationMenu
+                    }
+                }
+                4 {
+                    $MenuAddress = 1870 #ViewRestoreQueue
+                    break RestoreQueueDestinationMenu
+                }
+                5 {
+                    Clear-RestoreFromQueue
+                    break RestoreQueueDestinationMenu
+                }
+            }
             $MenuAddress = 1800 #BrowseAndRestoreMenu
             break RestoreQueueDestinationMenu
         }
 
-        #Build menu array
-        [string[]]$m = @()
-        $m += "$($script:RestoreFromQueue.count) items selected"
-        $l = 2
-        #Check if items have overlapping paths that may overwrite each other and add warning if needed
-        if (Check-RestoreFromQueueConflict) {
-            $m += "WARNING: Some items chosen for restore have overlapping paths.  Continuing may lead to unexpected results."
-            $l++
+        :RestoreQueueOptionsMenu while ($MenuAddress -eq 1850) {
+            #Collect options and move on
+
+            Ask-RestoreOptions
+            Ask-DryRun
+            if ($RestoreDryRunOption -eq $true) {
+                Ask-DryRunQueueMode
+            }
+            $MenuAddress = 1860
+            break RestoreQueueOptionsMenu
         }
-        $m += ""
-        $m += "Restore to original location"
-        $m += "Browse other restore location"
-        $m += "Enter restore location manually"
-        $m += "Review queued items"
-        $m += "Clear restore queue"
 
-        Show-Menu -HeaderLines $l -SlashForBack -MenuLines $m
+        :ConfirmRestoreQueueMenu while ($MenuAddress -eq 1860) {
+            #Displays restore options and confirms operation with user before running restore
 
-        switch ($MenuChoice) {
-            1 {
-                $RestoreTo = "" #Empty string is interpreted as original location
-                $MenuAddress = 1850 #RestoreQueueOptionsMenu
-                break RestoreQueueDestinationMenu
+            #Build menu array
+            [string[]]$m = @()
+            if ($RestoreTo -eq "") {
+                $m += "Restore $($script:RestoreFromQueue.count) items to original locations?"
+            } else {
+                $m += "Restore $($script:RestoreFromQueue.count) items to $($RestoreTo)?"
             }
-            2 {
-                $p = Browse-RestoreToPath
-                if ($p -eq $null) { #Browse-RestoreToPath returns $null if exited
-                    break RestoreQueueDestinationMenu
-                } else {
-                    $RestoreTo = $p
-                    $MenuAddress = 1850 #RestoreQueueOptionsMenu
-                    break RestoreQueueDestinationMenu
-                }
-            }
-            3 {
-                $p = Read-WinPath
-                if ($p -ne "") { #Read-WinPath returns $null after running out of retries
-                    $RestoreTo = $p
-                    $MenuAddress = 1850 #RestoreQueueOptionsMenu
-                    break RestoreQueueDestinationMenu
-                } else {
-                    break RestoreQueueDestinationMenu
-                }
-            }
-            4 {
-                $MenuAddress = 1870 #ViewRestoreQueue
-                break RestoreQueueDestinationMenu
-            }
-            5 {
-                Clear-RestoreFromQueue
-                break RestoreQueueDestinationMenu
-            }
-        }
-        $MenuAddress = 1800 #BrowseAndRestoreMenu
-        break RestoreQueueDestinationMenu
-    }
+            $m += "$(Get-RestoreOptionsWarningString)" #Display these setting again for the user
+            $m += "$(Get-RestoreDryRunWarningString)"
+            $m += ""
+            $m += "Yes"
+            $m += "No"
 
-    :RestoreQueueOptionsMenu while ($MenuAddress -eq 1850) {
-        #Collect options and move on
+            Show-Menu -HeaderLines 4 -MenuLines $m
 
-        Ask-RestoreOptions
-        Ask-DryRun
-        if ($RestoreDryRunOption -eq $true) {
-            Ask-DryRunQueueMode
-        }
-        $MenuAddress = 1860
-        break RestoreQueueOptionsMenu
-    }
+            #Restore items and go back to BrowseAndRestoreMenu
 
-    :ConfirmRestoreQueueMenu while ($MenuAddress -eq 1860) {
-        #Displays restore options and confirms operation with user before running restore
-
-        #Build menu array
-        [string[]]$m = @()
-        if ($RestoreTo -eq "") {
-            $m += "Restore $($script:RestoreFromQueue.count) items to original locations?"
-        } else {
-            $m += "Restore $($script:RestoreFromQueue.count) items to $($RestoreTo)?"
-        }
-        $m += "$(Get-RestoreOptionsWarningString)" #Display these setting again for the user
-        $m += "$(Get-RestoreDryRunWarningString)"
-        $m += ""
-        $m += "Yes"
-        $m += "No"
-
-        Show-Menu -HeaderLines 4 -MenuLines $m
-
-        #Restore items and go back to BrowseAndRestoreMenu
-
-        #Just restore everything at once
-        if ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $false) {
-            Restore-Queue
-        #Dry run all at once, do it again for real if approved
-        } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Group") {
-            $script:QueueRestoreLogPaths = @()
-            Restore-Queue -GroupDryRun
-            Confirm-DryRunQueueGroup
-            if ($RestoreDryRunOption -eq $false) {
+            #Just restore everything at once
+            if ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $false) {
                 Restore-Queue
+            #Dry run all at once, do it again for real if approved
+            } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Group") {
+                $script:QueueRestoreLogPaths = @()
+                Restore-Queue -GroupDryRun
+                Confirm-DryRunQueueGroup
+                if ($RestoreDryRunOption -eq $false) {
+                    Restore-Queue
+                }
+            #Go through each item in queue individually with the single item functions.
+            } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Individual") {
+                Restore-Queue -IndividualDryRuns
             }
-        #Go through each item in queue individually with the single item functions.
-        } elseif ($MenuChoice -eq 1 -and $RestoreDryRunOption -eq $true -and $DryRunQueueMode -eq "Individual") {
-            Restore-Queue -IndividualDryRuns
-        }
-        $MenuAddress = 1800 #BrowseAndRestoreMenu
-        break ConfirmRestoreQueueMenu
-    }
-
-    :ViewRestoreQueue while ($MenuAddress -eq 1870) {
-        #View restore queue and remove individual items
-
-        if (Check-RestoreFromQueueEmpty) {
-            Warn-RestoreFromQueueEmpty
             $MenuAddress = 1800 #BrowseAndRestoreMenu
-            break ViewRestoreQueue
+            break ConfirmRestoreQueueMenu
         }
-        $KeepPage = $false
-        [string[]]$m = @()
-        $m += "$($RestoreFromQueue.count) items in restore queue"
-        $m += ""
-        $script:RestoreFromQueue | ForEach-Object {$m += Convert-NixPathToWin($_.path)}
-        $m += ""
-        Show-Menu -HeaderLines 2 -FooterLines 1 -QueueMenu -MenuLines $m
-        if ($MenuChoice -is [int]) {
-            $RestoreFromQueue.Remove($RestoreFromQueue[$MenuChoice - 1])
-        } elseif ($MenuChoice -in @("/","")) {
-            $MenuAddress = 1840 #RestoreQueueDestinationMenu
-            break ViewRestoreQueue
-        } elseif ($MenuChoice -eq "-") {
-            Clear-RestoreFromQueue
-            $MenuAddress = 1800 #BrowseAndRestoreMenu
-            break ViewRestoreQueue
+
+        :ViewRestoreQueue while ($MenuAddress -eq 1870) {
+            #View restore queue and remove individual items
+
+            if (Check-RestoreFromQueueEmpty) {
+                Warn-RestoreFromQueueEmpty
+                $MenuAddress = 1800 #BrowseAndRestoreMenu
+                break ViewRestoreQueue
+            }
+            $KeepPage = $false
+            [string[]]$m = @()
+            $m += "$($RestoreFromQueue.count) items in restore queue"
+            $m += ""
+            $script:RestoreFromQueue | ForEach-Object {$m += Convert-NixPathToWin($_.path)}
+            $m += ""
+            Show-Menu -HeaderLines 2 -FooterLines 1 -QueueMenu -MenuLines $m
+            if ($MenuChoice -is [int]) {
+                $RestoreFromQueue.Remove($RestoreFromQueue[$MenuChoice - 1])
+            } elseif ($MenuChoice -in @("/","")) {
+                $MenuAddress = 1840 #RestoreQueueDestinationMenu
+                break ViewRestoreQueue
+            } elseif ($MenuChoice -eq "-") {
+                Clear-RestoreFromQueue
+                $MenuAddress = 1800 #BrowseAndRestoreMenu
+                break ViewRestoreQueue
+            }
+        }
+
+        ###################################################################################################
+        #Backup Tasks
+        ###################################################################################################
+
+        :TopBackupTaskMenu while ($MenuAddress -eq 2000) {
+            cls
+            write-host "Backup task creation and management coming soon!"
+            pause
+            $MenuAddress = 0
         }
     }
-
-    ###################################################################################################
-    #Backup Tasks
-    ###################################################################################################
-
-    :TopBackupTaskMenu while ($MenuAddress -eq 2000) {
-        cls
-        write-host "Backup task creation and management coming soon!"
-        pause
-        $MenuAddress = 0
-    }
+#General try/catch to perform cleanup in event of other unhandled errors
+} catch {
+    Clean-Exit 1
 }

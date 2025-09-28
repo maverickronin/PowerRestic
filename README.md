@@ -162,6 +162,12 @@ It's just the usual `SETTING=VALUE` and order doesn't matter.  You don't need qu
     - Default: null
     - Path to any repository you'd like to pin for quick access.  Repeat on multiple lines as many times as you need.
 
+##### Security settings
+
+- ClearCachedCredentialsOnExit
+    - Default: null
+    - Encrypted cached credentials will be deleted on exit unless this is explicitly set to 0
+
 ##### RClone settings
 
 - RClonePath
