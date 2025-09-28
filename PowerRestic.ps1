@@ -1072,7 +1072,7 @@ function Open-Repo {
                 #Try to unlock and decrement retry counter it this is the first time
                 #passes lock message which can include username and PID
                 } else {
-                    Unlock-Repo -LockMessage $p.ToString() -LockedRepo $path
+                    Unlock-Repo -LockMessage $line.ToString() -LockedRepo $path
                     $i = $i - 1
                     $triedLocked = $true
                 }
