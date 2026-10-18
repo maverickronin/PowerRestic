@@ -1132,7 +1132,7 @@ function Open-Repo {
                 break
             }
             #Display RClone errors
-            if ($line -like "*rclone*" -and ($line -like "*critical*" -or $line -like "*fatal*")) {
+            if ($line -like "*rclone*" -and ($line -like "*critical*" -or $line -like "*fatal*" -or $line -like "*notice*")) {
                 Write-Host $line
                 pause
                 break TryRepoPasswords
@@ -2933,8 +2933,6 @@ function Clean-Exit {
 
 function Remove-CachedCredentials {
     #Deletes cached credential files if set to
-
-
     if ($script:Options.ClearCachedCredentialsOnExit -ne 0) {
         gci -Force -Filter "*-pr-credential.xml" | Remove-Item -Force | Out-Null
     }
